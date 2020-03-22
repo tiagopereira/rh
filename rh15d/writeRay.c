@@ -207,14 +207,22 @@ void init_hdf5_ray_new(void)
     dims[3] = io.ray_nwave_sel;
     if (( file_dspace = H5Screate_simple(4, dims, NULL) ) < 0) HERR(routineName);
     /* Source function, opacity and emissivity, line and continuum */
-    if (( io.ray_chi_var = H5Dcreate(ncid, CHI_NAME, H5T_NATIVE_FLOAT,
+    if (( io.ray_chi_l_var = H5Dcreate(ncid, CHI_L_NAME, H5T_NATIVE_FLOAT,
 				                     file_dspace, H5P_DEFAULT, plist,
 				                     H5P_DEFAULT)) < 0) HERR(routineName);
     /* Attach dimension scales */
-    if (( H5DSattach_scale(io.ray_chi_var, id_x, 0)) < 0) HERR(routineName);
-    if (( H5DSattach_scale(io.ray_chi_var, id_y, 1)) < 0) HERR(routineName);
-    if (( H5DSattach_scale(io.ray_chi_var, id_z, 2)) < 0) HERR(routineName);
-    if (( H5DSattach_scale(io.ray_chi_var, id_wave_sel, 3)) < 0) HERR(routineName);
+    if (( H5DSattach_scale(io.ray_chi_l_var, id_x, 0)) < 0) HERR(routineName);
+    if (( H5DSattach_scale(io.ray_chi_l_var, id_y, 1)) < 0) HERR(routineName);
+    if (( H5DSattach_scale(io.ray_chi_l_var, id_z, 2)) < 0) HERR(routineName);
+    if (( H5DSattach_scale(io.ray_chi_l_var, id_wave_sel, 3)) < 0) HERR(routineName);
+    if (( io.ray_chi_c_var = H5Dcreate(ncid, CHI_C_NAME, H5T_NATIVE_FLOAT,
+				                     file_dspace, H5P_DEFAULT, plist,
+				                     H5P_DEFAULT)) < 0) HERR(routineName);
+    /* Attach dimension scales */
+    if (( H5DSattach_scale(io.ray_chi_c_var, id_x, 0)) < 0) HERR(routineName);
+    if (( H5DSattach_scale(io.ray_chi_c_var, id_y, 1)) < 0) HERR(routineName);
+    if (( H5DSattach_scale(io.ray_chi_c_var, id_z, 2)) < 0) HERR(routineName);
+    if (( H5DSattach_scale(io.ray_chi_c_var, id_wave_sel, 3)) < 0) HERR(routineName);
     if (( io.ray_S_var = H5Dcreate(ncid, S_NAME, H5T_NATIVE_FLOAT,
 				                   file_dspace, H5P_DEFAULT, plist,
 				                   H5P_DEFAULT)) < 0) HERR(routineName);
@@ -223,7 +231,7 @@ void init_hdf5_ray_new(void)
     if (( H5DSattach_scale(io.ray_S_var, id_y, 1)) < 0) HERR(routineName);
     if (( H5DSattach_scale(io.ray_S_var, id_z, 2)) < 0) HERR(routineName);
     if (( H5DSattach_scale(io.ray_S_var, id_wave_sel, 3)) < 0) HERR(routineName);
-    if (( io.ray_j_var = H5Dcreate(ncid, "Jlambda", H5T_NATIVE_FLOAT,
+    if (( io.ray_j_var = H5Dcreate(ncid, J_NAME, H5T_NATIVE_FLOAT,
 				                   file_dspace, H5P_DEFAULT, plist,
 				                   H5P_DEFAULT)) < 0) HERR(routineName);
     /* Attach dimension scales */
@@ -231,14 +239,14 @@ void init_hdf5_ray_new(void)
     if (( H5DSattach_scale(io.ray_j_var, id_y, 1)) < 0) HERR(routineName);
     if (( H5DSattach_scale(io.ray_j_var, id_z, 2)) < 0) HERR(routineName);
     if (( H5DSattach_scale(io.ray_j_var, id_wave_sel, 3)) < 0) HERR(routineName);
-    if (( io.ray_sca_c_var = H5Dcreate(ncid, SCA_C_NAME, H5T_NATIVE_FLOAT,
+    if (( io.ray_eps_c_var = H5Dcreate(ncid, EPS_C_NAME, H5T_NATIVE_FLOAT,
 				                       file_dspace, H5P_DEFAULT, plist,
 				                       H5P_DEFAULT)) < 0) HERR(routineName);
     /* Attach dimension scales */
-    if (( H5DSattach_scale(io.ray_sca_c_var, id_x, 0)) < 0) HERR(routineName);
-    if (( H5DSattach_scale(io.ray_sca_c_var, id_y, 1)) < 0) HERR(routineName);
-    if (( H5DSattach_scale(io.ray_sca_c_var, id_z, 2)) < 0) HERR(routineName);
-    if (( H5DSattach_scale(io.ray_sca_c_var, id_wave_sel, 3)) < 0) HERR(routineName);
+    if (( H5DSattach_scale(io.ray_eps_c_var, id_x, 0)) < 0) HERR(routineName);
+    if (( H5DSattach_scale(io.ray_eps_c_var, id_y, 1)) < 0) HERR(routineName);
+    if (( H5DSattach_scale(io.ray_eps_c_var, id_z, 2)) < 0) HERR(routineName);
+    if (( H5DSattach_scale(io.ray_eps_c_var, id_wave_sel, 3)) < 0) HERR(routineName);
   }
 
   /* --- Write attributes --- */
@@ -285,7 +293,7 @@ void init_hdf5_ray_new(void)
     if (( H5LTset_attribute_string(ncid, TAU1_NAME, "units",
                                    UNIT_LENGTH) ) < 0) HERR(routineName);
     if (( H5LTset_attribute_string(ncid, TAU1_NAME, DESC_NAME,
-                     "Height of optical depth unity") ) < 0) HERR(routineName);
+                "Height of total optical depth unity") ) < 0) HERR(routineName);
   }
 
   if (write_xtra) {
@@ -295,21 +303,27 @@ void init_hdf5_ray_new(void)
          "Total source function (line + continuum)" ) ) < 0) HERR(routineName);
     if (( H5LTset_attribute_float(ncid, S_NAME, "_FillValue",
                                   &FILLVALUE, 1) ) < 0) HERR(routineName);
-    if (( H5LTset_attribute_string(ncid, CHI_NAME, "units",
+    if (( H5LTset_attribute_string(ncid, CHI_L_NAME, "units",
                                    UNIT_PER_LENGTH ) ) < 0) HERR(routineName);
-    if (( H5LTset_attribute_string(ncid, CHI_NAME, DESC_NAME,
-              "Total absorption (line + continuum)" ) ) < 0) HERR(routineName);
-    if (( H5LTset_attribute_float(ncid, CHI_NAME, "_FillValue",
+    if (( H5LTset_attribute_string(ncid, CHI_L_NAME, DESC_NAME,
+                       "Line extinction coefficient" ) ) < 0) HERR(routineName);
+    if (( H5LTset_attribute_float(ncid, CHI_L_NAME, "_FillValue",
                                   &FILLVALUE, 1) ) < 0) HERR(routineName);
-    if (( H5LTset_attribute_string(ncid, "/Jlambda", "units",
+    if (( H5LTset_attribute_string(ncid, CHI_C_NAME, "units",
+                                   UNIT_PER_LENGTH ) ) < 0) HERR(routineName);
+    if (( H5LTset_attribute_string(ncid, CHI_C_NAME, DESC_NAME,
+                  "Continuum extinction coefficient" ) ) < 0) HERR(routineName);
+    if (( H5LTset_attribute_float(ncid, CHI_C_NAME, "_FillValue",
+                                  &FILLVALUE, 1) ) < 0) HERR(routineName);
+    if (( H5LTset_attribute_string(ncid, J_NAME, "units",
                                    UNIT_INTENSITY ) ) < 0) HERR(routineName);
-    if (( H5LTset_attribute_string(ncid, "/Jlambda", DESC_NAME,
+    if (( H5LTset_attribute_string(ncid, J_NAME, DESC_NAME,
                              "Mean radiation field" ) ) < 0) HERR(routineName);
-    if (( H5LTset_attribute_float(ncid, "/Jlambda", "_FillValue",
+    if (( H5LTset_attribute_float(ncid, J_NAME, "_FillValue",
                                   &FILLVALUE, 1) ) < 0) HERR(routineName);
-    if (( H5LTset_attribute_string(ncid, SCA_C_NAME, DESC_NAME,
-            "Scattering term multiplied by Jlambda" ) ) < 0) HERR(routineName);
-    if (( H5LTset_attribute_float(ncid, SCA_C_NAME, "_FillValue",
+    if (( H5LTset_attribute_string(ncid, EPS_C_NAME, DESC_NAME,
+      "Photon destruction probability from continuum processes" ) ) < 0) HERR(routineName);
+    if (( H5LTset_attribute_float(ncid, EPS_C_NAME, "_FillValue",
                                   &FILLVALUE, 1) ) < 0) HERR(routineName);
   }
   if (( H5Pclose(plist) ) < 0 ) HERR(routineName);
@@ -379,13 +393,15 @@ void init_hdf5_ray_existing(void)
       HERR(routineName);
   }
   if (write_xtra) {
-    if (( io.ray_chi_var = H5Dopen(ncid, CHI_NAME, H5P_DEFAULT) ) < 0)
+    if (( io.ray_chi_l_var = H5Dopen(ncid, CHI_L_NAME, H5P_DEFAULT) ) < 0)
+      HERR(routineName);
+    if (( io.ray_chi_c_var = H5Dopen(ncid, CHI_C_NAME, H5P_DEFAULT) ) < 0)
       HERR(routineName);
     if (( io.ray_S_var = H5Dopen(ncid, S_NAME, H5P_DEFAULT) ) < 0)
       HERR(routineName);
-    if (( io.ray_j_var = H5Dopen(ncid, "Jlambda", H5P_DEFAULT) ) < 0)
+    if (( io.ray_j_var = H5Dopen(ncid, J_NAME, H5P_DEFAULT) ) < 0)
       HERR(routineName);
-    if (( io.ray_sca_c_var = H5Dopen(ncid, SCA_C_NAME, H5P_DEFAULT) ) < 0)
+    if (( io.ray_eps_c_var = H5Dopen(ncid, EPS_C_NAME, H5P_DEFAULT) ) < 0)
       HERR(routineName);
   }
   return;
@@ -412,10 +428,11 @@ void close_hdf5_ray(void) {
     if (( H5Dclose(io.ray_tau1_var) ) < 0) HERR(routineName);
   }
   if (write_xtra) {
-    if (( H5Dclose(io.ray_chi_var ) ) < 0) HERR(routineName);
+    if (( H5Dclose(io.ray_chi_l_var ) ) < 0) HERR(routineName);
+    if (( H5Dclose(io.ray_chi_c_var ) ) < 0) HERR(routineName);
     if (( H5Dclose(io.ray_S_var ) ) < 0) HERR(routineName);
     if (( H5Dclose(io.ray_j_var ) ) < 0) HERR(routineName);
-    if (( H5Dclose(io.ray_sca_c_var ) ) < 0) HERR(routineName);
+    if (( H5Dclose(io.ray_eps_c_var ) ) < 0) HERR(routineName);
     if (io.ray_wave_idx != NULL) free(io.ray_wave_idx);
   }
   if (( H5Fclose(io.ray_ncid) ) < 0) HERR(routineName);
@@ -430,8 +447,8 @@ void writeRay(void) {
   const char routineName[] = "writeRay";
   int        idx, k, l, nspect;
   double    *J;
-  float    **chi, **S, **sca, *tau_one, tau_cur, tau_prev, tmp, *chi_tmp;
-  float    **Jnu;
+  float    **chi_l, **chi_c, **S, **eps_c, *tau_one, tau_cur, tau_prev, tmp;
+  float    **Jnu, *chi_tmp;
   hsize_t    offset[] = {0, 0, 0, 0};
   hsize_t    count[] = {1, 1, 1, 1};
   hsize_t    dims[4];
@@ -534,9 +551,10 @@ void writeRay(void) {
 
   if (write_xtra) {
     /* Write opacity and emissivity for line and continuum */
-    chi = matrix_float(infile.nz, io.ray_nwave_sel);
+    chi_l = matrix_float(infile.nz, io.ray_nwave_sel);
+    chi_c = matrix_float(infile.nz, io.ray_nwave_sel);
+    eps_c = matrix_float(infile.nz, io.ray_nwave_sel);
     S   = matrix_float(infile.nz, io.ray_nwave_sel);
-    sca = matrix_float(infile.nz, io.ray_nwave_sel);
     Jnu = matrix_float(infile.nz, io.ray_nwave_sel);
 
     if (input.limit_memory) J = (double *) malloc(atmos.Nspace *
@@ -567,16 +585,18 @@ void writeRay(void) {
 
       /* Zero S and chi  */
       for (k = 0; k < infile.nz; k++) {
-        chi[k][nspect] = FILLVALUE;
+        chi_l[k][nspect] = FILLVALUE;
+        chi_c[k][nspect] = FILLVALUE;
+        eps_c[k][nspect] = FILLVALUE;
         S[k][nspect]   = FILLVALUE;
-        sca[k][nspect] = FILLVALUE;
         Jnu[k][nspect] = FILLVALUE;
       }
 
       for (k = 0;  k < atmos.Nspace;  k++) {
         l = k + mpi.zcut;
-        chi[l][nspect] = (float) (as->chi[k] + as->chi_c[k]);
-      	sca[l][nspect] = (float) (as->sca_c[k] * J[k]);
+        chi_l[l][nspect] = (float) (as->chi[k]);
+        chi_c[l][nspect] = (float) (as->chi_c[k]);
+      	eps_c[l][nspect] = (float) (as->chi_c[k] / (as->chi_c[k] + as->sca_c[k]));
       	S[l][nspect]   = (float) ((as->eta[k] + as->eta_c[k] +
                            as->sca_c[k] * J[k]) / (as->chi[k] + as->chi_c[k]));
         Jnu[l][nspect] = (float) J[k];
@@ -602,18 +622,22 @@ void writeRay(void) {
     if (( file_dataspace = H5Dget_space(io.ray_S_var) ) < 0) HERR(routineName);
     if (( H5Sselect_hyperslab(file_dataspace, H5S_SELECT_SET, offset,
                               NULL, count, NULL) ) < 0) HERR(routineName);
-    if (( H5Dwrite(io.ray_chi_var, H5T_NATIVE_FLOAT, mem_dataspace,
-                 file_dataspace, H5P_DEFAULT, chi[0]) ) < 0) HERR(routineName);
+    if (( H5Dwrite(io.ray_chi_l_var, H5T_NATIVE_FLOAT, mem_dataspace,
+                 file_dataspace, H5P_DEFAULT, chi_l[0]) ) < 0) HERR(routineName);
+    if (( H5Dwrite(io.ray_chi_c_var, H5T_NATIVE_FLOAT, mem_dataspace,
+                 file_dataspace, H5P_DEFAULT, chi_c[0]) ) < 0) HERR(routineName);
     if (( H5Dwrite(io.ray_S_var, H5T_NATIVE_FLOAT, mem_dataspace,
                  file_dataspace, H5P_DEFAULT, S[0]) ) < 0) HERR(routineName);
     if (( H5Dwrite(io.ray_j_var, H5T_NATIVE_FLOAT, mem_dataspace,
                  file_dataspace, H5P_DEFAULT, Jnu[0]) ) < 0) HERR(routineName);
-    if (( H5Dwrite(io.ray_sca_c_var, H5T_NATIVE_FLOAT, mem_dataspace,
-                 file_dataspace, H5P_DEFAULT, sca[0]) ) < 0) HERR(routineName);
-    freeMatrix((void **) chi);
+    if (( H5Dwrite(io.ray_eps_c_var, H5T_NATIVE_FLOAT, mem_dataspace,
+                 file_dataspace, H5P_DEFAULT, eps_c[0]) ) < 0) HERR(routineName);
+    freeMatrix((void **) chi_l);
+    freeMatrix((void **) chi_c);
+    freeMatrix((void **) eps_c);
     freeMatrix((void **) S);
     freeMatrix((void **) Jnu);
-    freeMatrix((void **) sca);
+
     /* release dataspace resources */
     if (( H5Sclose(mem_dataspace) ) < 0) HERR(routineName);
     if (( H5Sclose(file_dataspace) ) < 0) HERR(routineName);

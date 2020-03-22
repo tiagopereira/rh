@@ -78,13 +78,14 @@
 #define WAVE_SEL     "wavelength_selected"
 #define WAVE_SEL_IDX "wavelength_indices"
 #define CHI_NAME     "chi"
+#define J_NAME       "Jnu"
 #define S_NAME       "source_function"
 #define TAU1_NAME    "tau_one_height"
 #define CHI_L_NAME   "chi_line"
 #define ETA_L_NAME   "eta_line"
 #define CHI_C_NAME   "chi_continuum"
 #define ETA_C_NAME   "eta_continuum"
-#define SCA_C_NAME   "scattering" // This is actually sca*J
+#define EPS_C_NAME   "epsilon_continuum"
 
 /* Definitions for the input data file */
 #define INPUTDATA_FILE "output/output_indata.hdf5"
@@ -174,7 +175,7 @@ typedef struct {
   hid_t  ray_ncid,          ray_wave_var,      ray_int_var,
          ray_stokes_q_var,  ray_stokes_u_var,  ray_stokes_v_var,  ray_j_var,
          ray_chi_l_var,     ray_eta_l_var,     ray_chi_c_var,     ray_eta_c_var,
-         ray_sca_c_var,     ray_chi_var,       ray_S_var,
+         ray_eps_c_var,     ray_chi_var,       ray_S_var,
          ray_tau1_var;
   int    ray_nwave_sel, *ray_wave_idx;
   double ray_muz;

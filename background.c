@@ -2,7 +2,7 @@
 
        Version:       rh2.0
        Author:        Han Uitenbroek (huitenbroek@nso.edu)
-       Last modified: Wed Jul 24 12:52:46 2013 --
+       Last modified: Thu May 20 13:55:29 2021 --
 
        --------------------------                      ----------RH-- */
 
@@ -38,7 +38,7 @@
        data files with transition lists in the molecular input files.
     -- Bound-free absorption and emission by OH and CH molecules.
 
- * Atomic models are specified in atoms.input, molecules in
+ * Atomic models are specified in atoms.input, molecules in 
    molecules.input
 
  * Entries for the atoms.input and molecules.input files should have
@@ -66,7 +66,7 @@
    data for this metal (generic atomic input data format), and
    population_file is the input file containing the NLTE population
    numbers from a previous calculation. This last entry is only read when
-   the second entry is set to NLTE.
+   the second entry is set to NLTE. 
 
    -- Units:
       Wavelengths are given in nm, densities in m^-3, opacities in m^2,
@@ -190,6 +190,9 @@ void Background(bool_t write_analyze_output, bool_t equilibria_only)
   }
 
   getCPU(3, TIME_START, NULL);
+
+  do_fudge = FALSE;
+  
   if (strcmp(input.fudgeData, "none")) {
     do_fudge = TRUE;
 
@@ -216,8 +219,7 @@ void Background(bool_t write_analyze_output, bool_t equilibria_only)
     }
     for (n = 0;  n < 3*Nfudge;  n++) fudge[0][n] += 1.0;
     fclose(fp_fudge);
-  } else
-    do_fudge = FALSE;
+  }
 
   /* --- Allocate temporary storage space. The quantities are used
          for the following purposes:
@@ -236,7 +238,7 @@ void Background(bool_t write_analyze_output, bool_t equilibria_only)
          When the atmosphere is not moving and has no magnetic fields
          these just point to the total quantities chi_c and eta_c.
 
-   Note: In case of magnetic fields in the atmosphere chi, eta and
+   Note: In case of magnetic fields in the atmosphere chi, eta and 
          chip, and chi_c, eta_c and chip_c contain all four Stokes
          parameters, and should be allocated a 4 and 3 times larger
          storage space, respectively.
@@ -329,7 +331,6 @@ void Background(bool_t write_analyze_output, bool_t equilibria_only)
 	    input.background_File);
     Error(ERROR_LEVEL_2, routineName, messageStr);
   }
-
   /* --- Go through the spectrum and add the different opacity and
          emissivity contributions. This is the main loop --  -------- */
 
@@ -696,6 +697,12 @@ void Background(bool_t write_analyze_output, bool_t equilibria_only)
     free(lambda_fudge);
     freeMatrix((void **) fudge);
   }
+
+  for (n = 0;  n < atmos.Nrlk;  n++) {
+    if (atmos.rlk_lines[n].zm != NULL) freeZeeman(atmos.rlk_lines[n].zm);
+  }
+  free(atmos.rlk_lines);
+  
   getCPU(2, TIME_POLL, "Total Background");
 }
 /* ------- end ---------------------------- Background.c ------------ */

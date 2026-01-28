@@ -1,8 +1,8 @@
-/* ------- file: -------------------------- piecestokes.c -----------
+/* ------- file: -------------------------- piecestokes_1D.c --------
 
        Version:       rh2.0, 1-D plane-parallel
        Author:        Han Uitenbroek (huitenbroek@nso.edu)
-       Last modified: Mon Feb 23 16:18:46 2004 --
+       Last modified: Thu May 24 14:21:55 2018 --
 
        --------------------------                      ----------RH-- */
 
@@ -26,6 +26,7 @@
 #include <math.h>
 
 #include "rh.h"
+#include "error.h"
 #include "atom.h"
 #include "atmos.h"
 #include "geometry.h"
@@ -40,13 +41,15 @@
 extern Geometry geometry;
 extern Atmosphere atmos;
 extern Spectrum spectrum;
+extern char messageStr[];
 
 
-/* ------- begin -------------------------- PiecewiseStokes.c ------- */
+/* ------- begin -------------------------- Piece_Stokes_1D.c ------- */
 
-void PiecewiseStokes(int nspect, int mu, bool_t to_obs,
+void Piece_Stokes_1D(int nspect, int mu, bool_t to_obs,
 		     double *chi_I, double **S, double **I, double *Psi)
 {
+  const char routineName[] = "Piece_Stokes_1D";
   register int k, n, m;
 
   int    Ndep = geometry.Ndep, k_start, k_end, dk;
@@ -85,6 +88,11 @@ void PiecewiseStokes(int nspect, int mu, bool_t to_obs,
     case IRRADIATED:
       I_upw[0] = geometry.Ibottom[nspect][mu];
       for (n = 1;  n < 4;  n++) I_upw[n] = 0.0;
+      break;
+    case REFLECTIVE:
+      sprintf(messageStr, "Boundary condition not implemented: %d",
+	      geometry.vboundary[BOTTOM]);
+      Error(ERROR_LEVEL_2, routineName, messageStr);
     }
   } else {
     switch (geometry.vboundary[TOP]) {
@@ -94,6 +102,11 @@ void PiecewiseStokes(int nspect, int mu, bool_t to_obs,
     case IRRADIATED:
       I_upw[0] = geometry.Itop[nspect][mu];
       for (n = 1;  n < 4;  n++) I_upw[n] = 0.0;
+      break;
+    default:
+      sprintf(messageStr, "Boundary condition not implemented: %d",
+	      geometry.vboundary[TOP]);
+      Error(ERROR_LEVEL_2, routineName, messageStr);
     }
   }
   for (n = 0;  n < 4;  n++)
@@ -159,4 +172,4 @@ void PiecewiseStokes(int nspect, int mu, bool_t to_obs,
   }
   freeMatrix((void **) R);
 }
-/* ------- end ---------------------------- PiecewiseStokes.c ------- */
+/* ------- end ---------------------------- Piece_Stokes_1D.c ------- */

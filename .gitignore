@@ -25,6 +25,7 @@
 *backgrcontr
 *solve1d
 *solveray
+*rhsphere
 
 # Packages and other stuff
 *.tgz

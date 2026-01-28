@@ -6,9 +6,12 @@
 #
 ##     --------------------------                      ----------RH-- ##
 
+GEOMETRY = SPHERICAL_SYMMETRIC
 
 include ../Makefile.config
 
+CFLAGS += -I../
+LDFLAGS += -L../
 
 ## --- If no FORTRAN compiler is available remove -lrh_f90 in following
 
@@ -43,7 +46,7 @@ clean:
 ## --- Explicit dependencies on include files --       -------------- ##
 
 
-feautrier.o:            ../rh.h  ../atom.h  ../atmos.h  \
+feautrier.o:            ../rh.h  ../error.h  ../atom.h  ../atmos.h  \
                         geometry.h  ../spectrum.h  ../error.h
 
 formal.o:               ../rh.h  ../atom.h  ../atmos.h  \

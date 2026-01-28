@@ -665,7 +665,7 @@ void Background_p(bool_t write_analyze_output, bool_t equilibria_only)
 	    chi_c[k] += chi[k];
 	    eta_c[k] += eta[k];
 	  }
-      	  if (input.rlkscatter) {
+	  if (input.rlkscatter) {
 	    for (k = 0;  k < atmos.Nspace;  k++) {
 	      sca_c[k] += scatt[k];
 	      chi_c[k] += scatt[k];

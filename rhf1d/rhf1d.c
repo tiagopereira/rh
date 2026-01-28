@@ -2,7 +2,7 @@
 
        Version:       rh2.0, 1-D plane-parallel
        Author:        Han Uitenbroek (huitenbroek@nso.edu)
-       Last modified: Fri May  1 08:25:50 2020 --
+       Last modified: Thu Feb 24 16:40:14 2011 --
 
        --------------------------                      ----------RH-- */
 
@@ -54,8 +54,7 @@ int main(int argc, char *argv[])
 {
   bool_t write_analyze_output, equilibria_only;
   int    niter, nact;
-  double deltaJ;
-  
+
   Atom *atom;
   Molecule *molecule;
 
@@ -65,7 +64,7 @@ int main(int argc, char *argv[])
   getCPU(0, TIME_START, NULL);
   SetFPEtraps();
 
-  readInput();
+  readInput(NULL);
   spectrum.updateJ = TRUE;
 
   getCPU(1, TIME_START, NULL);
@@ -91,18 +90,12 @@ int main(int argc, char *argv[])
 
   Iterate(input.NmaxIter, input.iterLimit);
 
-  /* --- If appropriate final solution(s) should be polarized -- ---- */
-  
   adjustStokesMode();
-  
   niter = 0;
   while (niter < input.NmaxScatter) {
-    deltaJ = solveSpectrum(FALSE, FALSE);
-    if (!input.backgr_pol && deltaJ <= input.iterLimit) break;
-
+    if (solveSpectrum(FALSE, FALSE) <= input.iterLimit) break;
     niter++;
   }
-  
   /* --- Write output files --                         -------------- */
 
   if (atmos.hydrostatic) {

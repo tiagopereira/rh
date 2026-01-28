@@ -99,8 +99,8 @@ int main(int argc, char *argv[])
     Error(ERROR_LEVEL_2, argv[0], messageStr);
   }
 
-  if (input.StokesMode == FIELD_FREE ||
-      input.StokesMode == POLARIZATION_FREE) {
+  if ((atmos.Stokes && input.StokesMode == FIELD_FREE) ||
+      input.backgr_pol) {
     input.StokesMode = FULL_STOKES;
   }
   /* --- redefine geometry for just this one ray --    -------------- */

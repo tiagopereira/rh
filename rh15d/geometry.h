@@ -15,7 +15,7 @@
 /* --- Define geometric quantities for 1-D plane-parallel version --  */
 
 
-enum boundcond  {IRRADIATED, ZERO, THERMALIZED, REFLECTIVE};
+enum boundcond  {ZERO, THERMALIZED, IRRADIATED, REFLECTIVE};
 enum mass_scale {GEOMETRIC, COLUMN_MASS, TAU500};
 enum atmos_type {HDF5, MULTI};
 enum vertical   {TOP=0, BOTTOM};

@@ -177,7 +177,7 @@ void readInput(char *input_string)
     {"XDR_ENDIAN", "TRUE", FALSE, KEYWORD_OPTIONAL,
      &input.xdr_endian, setboolValue},
 
-    {"S_INTERPOLATION", "LINEAR", FALSE, KEYWORD_DEFAULT,
+    {"S_INTERPOLATION", "S_LINEAR", FALSE, KEYWORD_DEFAULT,
      &input.S_interpolation, set_S_Interpolation},
 
     {"S_INTERPOLATION_STOKES", "DELO_BEZIER3", FALSE, KEYWORD_DEFAULT,

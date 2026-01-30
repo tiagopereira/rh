@@ -359,8 +359,6 @@ void Profile(AtomicLine *line)
   if (atmos.moving ||
       (line->polarizable && (input.StokesMode == FULL_STOKES))) {
        freeMatrix((void **) v);
-       freeZeeman(line->zm);
-       free(line->zm);
   }
   if (line->polarizable && (input.StokesMode == FULL_STOKES)) {
     free(vB);

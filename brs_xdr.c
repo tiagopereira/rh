@@ -129,7 +129,7 @@ bool_t xdr_BRS(XDR *xdrs)
 			 sizeof(bool_t), (xdrproc_t) xdr_bool);
   } else {
     atmos.backgrflags = (flags *) malloc(spectrum.Nspect * sizeof(flags));
-    atmos.backgrrecno = (long *) malloc(Nrecno * sizeof(int));
+    atmos.backgrrecno = (long *) malloc(Nrecno * sizeof(long));
 
     result &= xdr_counted_string(xdrs, &atmosID);
     if (!strstr(atmosID, atmos.ID)) {

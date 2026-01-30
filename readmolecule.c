@@ -403,11 +403,12 @@ void initMolecule(Molecule *molecule)
   molecule->popsFile = NULL;
   molecule->active = FALSE;
   molecule->fit = KURUCZ_70;
-  molecule->pt_index = molecule->pt_count = 0;
+  molecule->pt_index = molecule->pt_count = NULL;
   molecule->Nelement = molecule->Nnuclei = 0;
   molecule->Npf = molecule->Neqc = molecule->Nrt = 0;
   molecule->charge = 0;
   molecule->Nv = molecule->NJ = 0;
+  molecule->configs = NULL;
   molecule->Nconfig = 0;
   molecule->Ediss = molecule->Tmin = molecule->Tmax = molecule->weight = 0.0;
   molecule->vbroad = NULL;
@@ -420,6 +421,8 @@ void initMolecule(Molecule *molecule)
   molecule->Gamma = NULL;
   molecule->mrt = NULL;
   molecule->Ng_nv = NULL;
+  molecule->vbroad = NULL;
+  molecule->rhth = NULL;
 }
 /* ------- end ---------------------------- initMolecule.c ---------- */
 

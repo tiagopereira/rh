@@ -2,7 +2,7 @@
 
        Version:       rh2.0
        Author:        Han Uitenbroek (huitenbroek@nso.edu)
-       Last modified: Thu Feb 22 17:01:06 2024 --
+       Last modified: Mon Nov 22 11:20:47 2010 --
 
        --------------------------                      ----------RH-- */
 
@@ -55,8 +55,6 @@
 
 /* --- Function prototypes --                          -------------- */
 
-int pthread_setconcurrency(int new_level);
-
 
 /* --- Global variables --                             -------------- */
 
@@ -67,7 +65,7 @@ extern char messageStr[];
 
 /* ------- begin -------------------------- readValues.c ------------ */
 
-void readValues(FILE *fp_keyword, int Nkeyword,	Keyword *theKeywords)
+void readValues(char *fp_keyword, int Nkeyword,	Keyword *theKeywords)
 {
   const char routineName[] = "readValues";
   register int n;
@@ -78,8 +76,7 @@ void readValues(FILE *fp_keyword, int Nkeyword,	Keyword *theKeywords)
   int    nread;
 
   /* --- Read input data line-by-line --                ------------- */
-
-  while (getLine(fp_keyword, COMMENT_CHAR, line, exit_on_EOF=FALSE) != EOF) {
+  while (getLineString(&fp_keyword, COMMENT_CHAR, line, exit_on_EOF=FALSE) != EOF) {
     if ((nread = sscanf(line, "%s = %s", keyword, value)) != 2) {
       sprintf(messageStr, "Missing input value for keyword %s", keyword);
       Error(ERROR_LEVEL_2, routineName, messageStr);
@@ -228,7 +225,7 @@ void setAngleSet(char *value, void *pointer)
 
     sprintf(messageStr,
 	    "\n  Found Gauss-Legendre angleset with "
-	    "Ninclination = %d and Nazimuth = %d", 
+	    "Ninclination = %d and Nazimuth = %d",
 	    Ninclination, Nazimuth);
     Error(MESSAGE, "setAngleSet", messageStr);
 
@@ -328,7 +325,7 @@ void setThreadValue(char *value, void *pointer)
       Error(WARNING, routineName, "Non-default thread scheduling policy");
 
     /* --- Suggest thread concurrency to the operating system -- ---- */
-    
+
     if ((return_value = pthread_setconcurrency(Nthreads)))
       Error(ERROR_LEVEL_2, routineName,
 	    "Failed to set concurrency level for threads.");

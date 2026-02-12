@@ -2,7 +2,6 @@
 
        Version:       rh2.0
        Author:        Han Uitenbroek (huitenbroek@nso.edu)
-       Last modified: Thu May 20 14:26:44 2021 --
 
        --------------------------                      ----------RH-- */
 
@@ -216,9 +215,9 @@ void Stark(AtomicLine *line, double *GStark)
       neff_u = Z * sqrt(E_Rydberg / (atom->E[ic] - atom->E[line->j]));
     
       C4 = (SQ(Q_ELECTRON) / (4.0 * PI * EPSILON_0)) * RBOHR *
-	(2.0*PI * SQ(RBOHR) / HPLANCK) / (18.0 * SQ(Z)*SQ(Z)) *
-	(SQ(neff_u*(5.0*SQ(neff_u) + 1.0)) -
-	 SQ(neff_l*(5.0*SQ(neff_l) + 1.0)));
+       (2.0*PI * SQ(RBOHR) / HPLANCK) / (18.0 * SQ(Z)*SQ(Z)) *
+	   (SQ(neff_u*(5.0*SQ(neff_u) + 1.0)) -
+	   SQ(neff_l*(5.0*SQ(neff_l) + 1.0)));
       cStark23 = 11.37 * pow(line->cStark * C4, 0.66666667);
     }
     for (k = 0;  k < atmos.Nspace;  k++) {
@@ -238,6 +237,10 @@ void StarkLinear(AtomicLine *line, double *GStark)
     See: K. Sutton (1978), JQSRT 20, 333-343
 
          GStark = a_1 * [0.60 * (n_u^2 - n_l^2) * (N_e)^(2/3) * CM_TO_M^2]
+
+    TMPD changed 2023.08.02:
+      Multiplied by 4 * pi * 0.425, to follow Sutton (1978) eq. (24) and
+      have result in full width half maximum in angular frequency (rad/s).
          --                                            -------------- */
 
   const char routineName[] = "StarkLinear";
@@ -267,7 +270,7 @@ void StarkLinear(AtomicLine *line, double *GStark)
   else
     a1 = 1.0;
 
-  C = a1 * 0.6 * (SQ(n_upper) - SQ(n_lower)) * SQ(CM_TO_M);
+  C = 4.0 * PI * 0.425 * a1 * 0.6 * (SQ(n_upper) - SQ(n_lower)) * SQ(CM_TO_M);
   for (k = 0;  k < atmos.Nspace;  k++)
     GStark[k] = C * pow(atmos.ne[k], 0.66666667);
 }

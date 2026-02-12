@@ -61,6 +61,7 @@ typedef struct {
          Stokes_input[MAX_VALUE_LENGTH],
          KuruczData[MAX_VALUE_LENGTH],
          pfData[MAX_VALUE_LENGTH],
+         BarklemDir[MAX_VALUE_LENGTH],
          fudgeData[MAX_VALUE_LENGTH],
          atmos_output[MAX_VALUE_LENGTH],
          spectrum_output[MAX_VALUE_LENGTH],
@@ -79,7 +80,7 @@ typedef struct {
   bool_t magneto_optical, XRD, Eddington,
          backgr_pol, limit_memory, allow_passive_bb, NonICE,
          rlkscatter, xdr_endian, old_background, accelerate_mols,
-         RLK_explicit, prdh_limit_mem;
+         RLK_explicit, prdh_limit_mem, backgr_in_mem;
   enum   solution startJ;
   
   enum   StokesMode StokesMode;
@@ -92,8 +93,22 @@ typedef struct {
   int    isum, Ngdelay, Ngorder, Ngperiod, NmaxIter,
          PRD_NmaxIter, PRD_Ngdelay, PRD_Ngorder, PRD_Ngperiod,
          NmaxScatter, Nthreads, CR_Nstep;
-  double iterLimit, PRDiterLimit, metallicity, CR_factor;
-
+  /* Tiago, for micro turbulence multiplication and addition */
+  double vturb_mult, vturb_add;
+  /* Tiago, added this for 1.5D version */
+  int    p15d_nt, p15d_x0, p15d_x1, p15d_xst, p15d_y0, p15d_y1, p15d_yst;
+  int    Natoms;
+  double p15d_tmax;
+  bool_t p15d_wxtra, p15d_rerun, p15d_refine, p15d_zcut, p15d_wtau;
+  bool_t p15d_wpop, p15d_wrates, p15d_wcrates;
+  double iterLimit, PRDiterLimit, metallicity, CR_factor, *wavetable;
+  unsigned int Nxwave;
+  /* Tiago, for saving the input files */
+  char  *atoms_file_contents, *keyword_file_contents, *ray_file_contents;
+  char **atomic_file_contents;
+  char  *kurucz_file_contents, **kurucz_line_file_contents;
+  char **kurucz_line_file_name;
+  int Nkurucz_files;
   pthread_attr_t thread_attr;
 } InputData;
 
@@ -102,9 +117,14 @@ typedef struct {
 
 int   getLine(FILE *inputFile, char *commentChar, char *line,
 	      bool_t exit_on_EOF);
+int   getLineString(char **inputString, char *commentChar, char *line,
+                    bool_t exit_on_EOF);
 void  parse(int argc, char *argv[], int Noption, Option *theOptions);
-void  readInput();
-void  readValues(FILE *fp_keyword, int Nkeyword, Keyword *theKeywords);
+void  readInput(char *input_string);
+void  readValues(char *fp_keyword, int Nkeyword, Keyword *theKeywords);
+
+char *readWholeFile(const char *filename);
+char *sgets(char *str, int num, char **input);
 
 void  setAngleSet(char *value, void *pointer);
 void  setcharValue(char *value, void *pointer);

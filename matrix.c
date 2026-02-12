@@ -2,7 +2,7 @@
 
        Version:       rh2.0
        Author:        Han Uitenbroek (huitenbroek@nso.edu)
-       Last modified: Thu Oct  8 16:57:27 2020 --
+       Last modified: Wed Dec 29 14:15:27 1999 --
 
        --------------------------                      ----------RH-- */
 
@@ -72,11 +72,9 @@ double **matrix_double(int Nrow, int Ncol)
   register int i;
 
   int     typeSize = sizeof(double), pointerSize = sizeof(double *);
-  size_t  memSize;
   double *theMatrix, **Matrix;
 
-  memSize   = ((long) Nrow * (long) Ncol); 
-  theMatrix = (double *)  calloc(memSize, typeSize);
+  theMatrix = (double *)  calloc(Nrow * Ncol, typeSize);
   Matrix    = (double **) malloc(Nrow * pointerSize);
   for (i = 0;  i < Nrow;  i++, theMatrix += Ncol)
     Matrix[i] = theMatrix;
@@ -84,6 +82,24 @@ double **matrix_double(int Nrow, int Ncol)
   return Matrix;
 }
 /* ------- end ---------------------------- matrix_double.c --------- */
+
+/* ------- begin -------------------------- matrix_float.c --------- */
+
+float **matrix_float(int Nrow, int Ncol)
+{
+  register int i;
+
+  int     typeSize = sizeof(float), pointerSize = sizeof(float *);
+  float *theMatrix, **Matrix;
+
+  theMatrix = (float *)  calloc(Nrow * Ncol, typeSize);
+  Matrix    = (float **) malloc(Nrow * pointerSize);
+  for (i = 0;  i < Nrow;  i++, theMatrix += Ncol)
+    Matrix[i] = theMatrix;
+
+  return Matrix;
+}
+/* ------- end ---------------------------- matrix_float.c --------- */
 
 /* ------- begin -------------------------- freeMatrix.c ------------ */
 

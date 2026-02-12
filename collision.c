@@ -455,7 +455,7 @@ int atomnr(char ID[ATOM_ID_WIDTH+1])
 
 #define MSHELL 5
 
-void CollisionRate(struct Atom *atom, FILE *fp_atom)
+void CollisionRate(struct Atom *atom, char *fp_atom)
 {
   const char routineName[] = "CollisionRate";
   register int k, n, m, ii;
@@ -466,6 +466,7 @@ void CollisionRate(struct Atom *atom, FILE *fp_atom)
   int     nitem, i1, i2, i, j, ij, ji, Nlevel = atom->Nlevel, Nitem,
           status;
   long    Nspace = atmos.Nspace;
+  fpos_t  collpos;  
   double  dE, C0, *T, *coeff, *C, Cdown, Cup, gij, *np, xj, fac, fxj;
 
   int      Ncoef, Nrow;
@@ -494,7 +495,7 @@ void CollisionRate(struct Atom *atom, FILE *fp_atom)
 
   sumscl = 1.0;
 
-  while ((status = getLine(fp_atom, COMMENT_CHAR,
+  while ((status = getLineString(&fp_atom, COMMENT_CHAR,
 			   inputLine, exit_on_EOF=FALSE)) != EOF) {
     strcpy(keyword, strtok(inputLine, " "));
 
@@ -598,7 +599,7 @@ void CollisionRate(struct Atom *atom, FILE *fp_atom)
       badi  = matrix_double(Nrow, Ncoef);
 
       for (m = 0, nitem = 0;  m < Nrow;  m++) {
-	status = getLine(fp_atom, COMMENT_CHAR, inputLine,
+	status = getLineString(&fp_atom, COMMENT_CHAR, inputLine,
 			 exit_on_EOF=FALSE);
 
         badi[m][0] = atof(strtok(inputLine, " "));
@@ -644,7 +645,7 @@ void CollisionRate(struct Atom *atom, FILE *fp_atom)
       cdi = matrix_double(Nrow, MSHELL);
       
       for (m = 0, nitem = 0;  m < Nrow;  m++) {
-	status = getLine(fp_atom, COMMENT_CHAR, inputLine, exit_on_EOF=FALSE);
+	status = getLineString(&fp_atom, COMMENT_CHAR, inputLine, exit_on_EOF=FALSE);
 	
         cdi[m][0] = atof(strtok(inputLine, " "));
         nitem++;

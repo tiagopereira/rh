@@ -8,7 +8,13 @@
 
 GEOMETRY = ONE_D_PLANE
 
-include ../makefiles/rhmakefile
+
+include ../Makefile.config
+
+LIBS = -lrh -lrh_f90
+
+CFLAGS += -I../
+LDFLAGS += -L../
 
 
 ## --- Define groups of object files --                -------------- ##

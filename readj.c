@@ -42,6 +42,46 @@ extern InputData input;
 extern char messageStr[];
 
 
+
+
+/* ------- begin ----------------------------- storeBackground.c ---- */
+ void storeBackground(int la, int mu, bool_t to_obs,
+		      double *chi_c, double *eta_c, double *sca_c){
+
+     const char routineName[] = "storeBackground";
+
+    int    lamu, k;
+ 
+  lamu = 2*(atmos.Nrays*la + mu) + to_obs;
+
+  for (k = 0 ; k < atmos.Nspace ; k++) atmos.chi_b[lamu][k]=chi_c[k];
+  for (k = 0 ; k < atmos.Nspace ; k++) atmos.eta_b[lamu][k]=eta_c[k];
+  for (k = 0 ; k < atmos.Nspace ; k++) atmos.sca_b[lamu][k]=sca_c[k];
+
+}
+/* ------- end ------------------------------ storeBackground.c ---- */
+
+/* ------- begin ------------------------------ loadBackground.c ---- */
+ void loadBackground(int la, int mu, bool_t to_obs)
+{
+  const char routineName[] = "loadBackground";
+
+  int    lamu, k;
+  ActiveSet *as;
+ 
+  as = &spectrum.as[la];
+
+
+  lamu = 2*(atmos.Nrays*la + mu) + to_obs;
+
+  for (k = 0 ; k < atmos.Nspace ; k++) as->chi_c[k]=atmos.chi_b[lamu][k];
+  for (k = 0 ; k < atmos.Nspace ; k++) as->eta_c[k]=atmos.eta_b[lamu][k];
+  for (k = 0 ; k < atmos.Nspace ; k++) as->sca_c[k]=atmos.sca_b[lamu][k];
+
+}
+/* ------- end ------------------------------- loadBackground.c ---- */
+
+
 /* ------- begin -------------------------- readJlambda.c ----------- */
 
 void readJlambda(int nspect, double *J)

@@ -6,8 +6,8 @@
 #
 ##     --------------------------                      ----------RH-- ##
 
-CC       = gcc
-CFLAGS   = -O2  -I../
+CC       = clang
+CFLAGS   = -O2  -I../ -Wformat
 ##CFLAGS   = -g  -I../
 
 ifneq ("$(wildcard /usr/include/tirpc)","")
@@ -15,7 +15,7 @@ ifneq ("$(wildcard /usr/include/tirpc)","")
     TIRPC = 1
 endif
 
-LD       = gcc
+LD       = clang
 LDFLAGS  = -O2  -L../
 ##LDFLAGS  = -g  -L../
 

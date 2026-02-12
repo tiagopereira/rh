@@ -2,14 +2,14 @@
 
        Version:       rh2.0, 1-D plane-parallel
        Author:        Han Uitenbroek (huitenbroek@nso.edu)
-       Last modified: Mon Sep 22 16:09:49 2025 --
+       Last modified: Wed Jul 24 13:00:16 2013 --
 
        --------------------------                      ----------RH-- */
 
 /* --- Reads input data for and defines keywords for 1-D
        plane-parallel version --                       -------------- */
 
- 
+
 #include <string.h>
 
 #include "rh.h"
@@ -39,14 +39,14 @@ extern char messageStr[];
 
 /* ------- begin -------------------------- readInput.c ------------- */
 
-void readInput()
+void readInput(char *input_string)
 {
   const char routineName[] = "readInput";
   static char atom_input[MAX_VALUE_LENGTH], molecule_input[MAX_VALUE_LENGTH];
   char errorStr[MAX_MESSAGE_LENGTH];
   
   int   Nkeyword;
-  FILE *fp_keyword;
+  char *keyword_string;
 
   Keyword theKeywords[] = {
     {"ATMOS_FILE", "", FALSE, KEYWORD_REQUIRED, input.atmos_input,
@@ -107,7 +107,7 @@ void readInput()
     {"J_FILE",     "", FALSE, KEYWORD_REQUIRED, input.JFile, setcharValue},
     {"BACKGROUND_FILE", "", FALSE, KEYWORD_REQUIRED, input.background_File,
      setcharValue},
-    {"BACKGROUND_RAY_FILE", "background.ray", FALSE, 
+    {"BACKGROUND_RAY_FILE", "background.ray", FALSE,
      KEYWORD_OPTIONAL, input.background_ray_File,
      setcharValue},
     {"OLD_BACKGROUND", "FALSE", FALSE, KEYWORD_OPTIONAL,
@@ -120,6 +120,8 @@ void readInput()
      setboolValue},
     {"KURUCZ_DATA", "none", FALSE, KEYWORD_OPTIONAL, &input.KuruczData,
      setcharValue},
+    {"BARKLEM_DATA_DIR", "../../Atoms", FALSE, KEYWORD_OPTIONAL,
+     &input.BarklemDir, setcharValue},
     {"RLK_SCATTER", "FALSE", FALSE, KEYWORD_DEFAULT, &input.rlkscatter,
      setboolValue},
     {"KURUCZ_PF_DATA", "../../Atoms/pf_Kurucz.input", FALSE,
@@ -130,7 +132,7 @@ void readInput()
      setcharValue},
     {"METALLICITY", "0.0", FALSE, KEYWORD_DEFAULT, &input.metallicity,
      setdoubleValue},
-    
+
     {"ATMOS_OUTPUT", "atmos.out", FALSE, KEYWORD_DEFAULT, input.atmos_output,
      setcharValue},
     {"GEOMETRY_OUTPUT", "geometry.out", FALSE, KEYWORD_OPTIONAL,
@@ -175,14 +177,15 @@ void readInput()
     {"XDR_ENDIAN", "TRUE", FALSE, KEYWORD_OPTIONAL,
      &input.xdr_endian, setboolValue},
 
-    {"S_INTERPOLATION", "S_BEZIER3", FALSE, KEYWORD_DEFAULT,
+    {"S_INTERPOLATION", "S_LINEAR", FALSE, KEYWORD_DEFAULT,
      &input.S_interpolation, set_S_Interpolation},
+
     {"S_INTERPOLATION_STOKES", "DELO_BEZIER3", FALSE, KEYWORD_DEFAULT,
      &input.S_interpolation_stokes, set_S_interpolation_stokes},
 
-    {"INTERPOLATE_3D", "BICUBIC_3D", FALSE, KEYWORD_DEFAULT,
+    {"INTERPOLATE_3D", "LINEAR_3D", FALSE, KEYWORD_DEFAULT,
      &input.interpolate_3D, setInterpolate_3D},
-    
+
     {"PRINT_CPU", "0", FALSE, KEYWORD_OPTIONAL, &stats.printCPU,
      setboolValue},
     {"N_THREADS", "0", FALSE, KEYWORD_OPTIONAL, &input.Nthreads,
@@ -191,20 +194,61 @@ void readInput()
     {"LIMIT_MEMORY", "FALSE", FALSE, KEYWORD_DEFAULT, &input.limit_memory,
      setboolValue},
     {"ALLOW_PASSIVE_BB", "TRUE", FALSE, KEYWORD_DEFAULT,
-     &input.allow_passive_bb, setboolValue}
+     &input.allow_passive_bb, setboolValue},
+
+    /* --- 1.5D version related inputs go here --     --------------- */
+    {"SNAPSHOT", "0", FALSE, KEYWORD_OPTIONAL, &input.p15d_nt,
+     setintValue},
+    {"X_START", "0", FALSE, KEYWORD_OPTIONAL, &input.p15d_x0,
+     setintValue},
+    {"X_END", "-1",  FALSE, KEYWORD_OPTIONAL, &input.p15d_x1,
+     setintValue},
+    {"X_STEP", "1",  FALSE, KEYWORD_OPTIONAL, &input.p15d_xst,
+     setintValue},
+
+    {"Y_START", "0", FALSE, KEYWORD_OPTIONAL, &input.p15d_y0,
+     setintValue},
+    {"Y_END", "-1",  FALSE, KEYWORD_OPTIONAL, &input.p15d_y1,
+     setintValue},
+    {"Y_STEP", "1",  FALSE, KEYWORD_OPTIONAL, &input.p15d_yst,
+     setintValue},
+
+    {"VTURB_MULTIPLIER",     "1.0", FALSE, KEYWORD_OPTIONAL, &input.vturb_mult,
+     setdoubleValue},
+
+    {"VTURB_ADD",     "0.0", FALSE, KEYWORD_OPTIONAL, &input.vturb_add,
+     setdoubleValue},
+
+    {"15D_DEPTH_REFINE", "FALSE", FALSE, KEYWORD_OPTIONAL, &input.p15d_refine,
+     setboolValue},
+    {"15D_DEPTH_ZCUT", "TRUE", FALSE, KEYWORD_OPTIONAL, &input.p15d_zcut,
+     setboolValue},
+    {"15D_RERUN", "FALSE", FALSE, KEYWORD_OPTIONAL, &input.p15d_rerun,
+     setboolValue},
+    {"15D_TMAX_CUT", "-1.0",  FALSE, KEYWORD_OPTIONAL, &input.p15d_tmax,
+      setdoubleValue},
+    {"15D_WRITE_POPS", "FALSE",  FALSE, KEYWORD_OPTIONAL, &input.p15d_wpop,
+      setboolValue},
+    {"15D_WRITE_RRATES", "FALSE",  FALSE, KEYWORD_OPTIONAL, &input.p15d_wrates,
+      setboolValue},
+    {"15D_WRITE_CRATES", "FALSE",  FALSE, KEYWORD_OPTIONAL, &input.p15d_wcrates,
+      setboolValue},
+    {"15D_WRITE_TAU1", "FALSE",  FALSE, KEYWORD_OPTIONAL, &input.p15d_wtau,
+     setboolValue},
+    {"15D_WRITE_EXTRA",    "TRUE",  FALSE, KEYWORD_OPTIONAL, &input.p15d_wxtra,
+     setboolValue}
+
   };
   Nkeyword = sizeof(theKeywords) / sizeof(Keyword);
 
-  /* --- Open the input data file --                    ------------- */
-
-  if ((fp_keyword = fopen(commandline.keyword_input, "r")) == NULL) {
-    sprintf(messageStr, "Unable to open inputfile %s",
-	    commandline.keyword_input);
-    Error(ERROR_LEVEL_2, routineName, messageStr);
+  if (input_string == NULL) {  /* Read file from disk */
+      input.keyword_file_contents = readWholeFile(commandline.keyword_input);
+  } else {
+      input.keyword_file_contents = input_string;
   }
+  keyword_string = input.keyword_file_contents;
 
-  readValues(fp_keyword, Nkeyword, theKeywords);
-  fclose(fp_keyword);
+  readValues(keyword_string, Nkeyword, theKeywords);
 
   /* --- Perform some sanity checks --                 -------------- */
 
@@ -264,7 +308,7 @@ void readInput()
             "spherical geometry");
     }
     break;
- 
+
   case TWO_D_PLANE:
     if (input.Eddington && atmos.angleSet.set != NO_SET) {
       Error(WARNING, routineName,
@@ -358,7 +402,7 @@ void readInput()
             " in 1-D Cartesian geometry");
     break;
   }
-  
+
   /* --- If called with -showkeywords commandline option -- --------- */
 
   if (commandline.showkeywords) showValues(Nkeyword, theKeywords);

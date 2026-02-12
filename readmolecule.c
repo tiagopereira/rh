@@ -36,6 +36,15 @@
 
 #define C_13    0.011
 
+/* --- Special case: Si fractions for SiO --         from Asplund 2009  -------------- */
+
+#define SI_29    0.047
+#define SI_30    0.031
+
+/* --- Special case: Si fractions for MgH --         from Asplund 2009  -------------- */
+
+#define MG_25    0.10
+#define MG_26    0.11
 
 /* --- Special case: TI fractions for TiO --           -------------- */
 
@@ -394,11 +403,12 @@ void initMolecule(Molecule *molecule)
   molecule->popsFile = NULL;
   molecule->active = FALSE;
   molecule->fit = KURUCZ_70;
-  molecule->pt_index = molecule->pt_count = 0;
+  molecule->pt_index = molecule->pt_count = NULL;
   molecule->Nelement = molecule->Nnuclei = 0;
   molecule->Npf = molecule->Neqc = molecule->Nrt = 0;
   molecule->charge = 0;
   molecule->Nv = molecule->NJ = 0;
+  molecule->configs = NULL;
   molecule->Nconfig = 0;
   molecule->Ediss = molecule->Tmin = molecule->Tmax = molecule->weight = 0.0;
   molecule->vbroad = NULL;
@@ -411,6 +421,8 @@ void initMolecule(Molecule *molecule)
   molecule->Gamma = NULL;
   molecule->mrt = NULL;
   molecule->Ng_nv = NULL;
+  molecule->vbroad = NULL;
+  molecule->rhth = NULL;
 }
 /* ------- end ---------------------------- initMolecule.c ---------- */
 
@@ -420,27 +432,23 @@ void freeMolecule(Molecule *molecule)
 {
   register int kr;
 
-  free(molecule->pt_index);
-  free(molecule->pt_count);
+  if (molecule->pt_index != NULL) free(molecule->pt_index);
+  if (molecule->pt_count != NULL) free(molecule->pt_count);
+  if (molecule->vbroad != NULL)   free(molecule->vbroad);
+  if (molecule->pf_coef != NULL)  free(molecule->pf_coef);
+  if (molecule->eqc_coef != NULL) free(molecule->eqc_coef);
+  if (molecule->pf != NULL)       free(molecule->pf);
+  if (molecule->pfv != NULL)      freeMatrix((void **) molecule->pfv);
+  if (molecule->n != NULL)        free(molecule->n);
+  if (molecule->nv != NULL)       freeMatrix((void **) molecule->nv);
+  if (molecule->nvstar != NULL)   freeMatrix((void **) molecule->nvstar);
+  if (molecule->C_ul != NULL)     free(molecule->C_ul);
+  if (molecule->Gamma != NULL)    freeMatrix((void **) molecule->Gamma);
+  if (molecule->configs != NULL)  free(molecule->configs);
+  if (molecule->popsFile != NULL) free(molecule->popsFile);
+  if (molecule->rhth != NULL)     free(molecule->rhth);
 
-  if (molecule->Npf > 0) free(molecule->pf_coef);
-  free(molecule->pf);
-  if (molecule->Neqc > 0) free(molecule->eqc_coef);
-
-  free(molecule->n);
-  free(molecule->vbroad);
-
-  if (molecule->active) {
-    free(molecule->configs);
-    freeMatrix((void **) molecule->nv);
-    freeMatrix((void **) molecule->nvstar);
-    freeMatrix((void **) molecule->pfv);
-
-    free(molecule->popsFile);
-    free(molecule->rhth);
-  }
-
-  if (molecule->Nrt > 0) {
+  if (molecule->mrt != NULL) {
     for (kr = 0;  kr < molecule->Nrt;  kr++)
       freeMolLine(&molecule->mrt[kr]);
     free(molecule->mrt);
@@ -481,18 +489,16 @@ void freeMolLine(MolecularLine *mrt)
 {
   /* --- Free allocated memory for active transition structure line - */
 
-  Molecule *molecule = mrt->molecule;
-  
-  if (molecule->active) {
-    freeMatrix((void **) mrt->phi);
-    free(mrt->phi);
-  }
-  
-  if (atmos.Stokes &&
-      input.StokesMode == FULL_STOKES &&
-      mrt->polarizable) {
+  if (mrt->lambda != NULL)  free(mrt->lambda);
+  if (mrt->phi != NULL)     freeMatrix((void **) mrt->phi);
+  if (mrt->wphi != NULL)    free(mrt->wphi);
+
+  mrt->molecule = NULL;
+
+  if (mrt->zm != NULL) {
     freeZeeman(mrt->zm);
   }
+  mrt->zm = NULL;
 }
 /* ------- end ---------------------------- freeMolLine.c ----------- */
 
@@ -698,9 +704,14 @@ void readMolecularLines(struct Molecule *molecule, char *line_data)
       mrt->polarizable = FALSE;
     }
   } else if (strstr(format_string, "KURUCZ_CD18") ||
-	     strstr(format_string, "KURUCZ_NEW")  ||
-	     strstr(format_string, "KURUCZ_TIO")  ||
-	     strstr(format_string, "KURUCZ_CO")) {
+	         strstr(format_string, "KURUCZ_NEW") ||
+             strstr(format_string, "KURUCZ_SIO") ||
+             strstr(format_string, "KURUCZ_CN") ||
+             strstr(format_string, "KURUCZ_CH") ||
+             strstr(format_string, "KURUCZ_CO") ||
+             strstr(format_string, "KURUCZ_C2") ||
+             strstr(format_string, "KURUCZ_MGH") ||
+	         strstr(format_string, "KURUCZ_TIO")) {
 
     C = 2 * PI * (Q_ELECTRON/EPSILON_0) * (Q_ELECTRON/M_ELECTRON) / CLIGHT;
 
@@ -803,6 +814,110 @@ void readMolecularLines(struct Molecule *molecule, char *line_data)
 
 	Nread = sscanf(inputLine+57, "%1d", &mrt->subi);
 	Nread = sscanf(inputLine+65, "%1d", &mrt->subj);
+
+        } else if (strstr(format_string, "KURUCZ_CN") ||
+                   strstr(format_string, "KURUCZ_CH") ||
+                   strstr(format_string, "KURUCZ_C2") ||
+                   strstr(format_string, "KURUCZ_CO")) {
+
+    /* --- Electronic configuration --             -------------- */
+
+    strncpy(mrt->configi, inputLine+52, 2);
+    strncpy(mrt->configj, inputLine+60, 2);
+    mrt->configi[2] = '\0';
+    mrt->configj[2] = '\0';
+
+    /* --- Parity designation --                   -------------- */
+
+    mrt->parityi[0] = inputLine[56];
+    mrt->parityj[0] = inputLine[64];
+    mrt->parityi[1] = '\0';
+    mrt->parityj[1] = '\0';
+
+    /* --- Vibrational quantum numbers --            ------------ */
+
+    Nread = sscanf(inputLine+54, "%2d", &mrt->vi);
+    Nread = sscanf(inputLine+62, "%2d", &mrt->vj);
+
+    /* --- Subbranch (F1, F2, ...., E1, E2, ...etc) -- ---------- */
+
+    Nread = sscanf(inputLine+57, "%1d", &mrt->subi);
+    Nread = sscanf(inputLine+65, "%1d", &mrt->subj);
+
+    Nread = sscanf(inputLine+67, "%2d", &isotope);
+    switch (isotope) {
+    case 13: mrt->isotope_frac = C_13;  break;
+    default: mrt->isotope_frac = 1.0;
+    }
+
+
+    } else if (strstr(format_string, "KURUCZ_SIO")) {
+
+    /* --- Electronic configuration --             -------------- */
+
+    strncpy(mrt->configi, inputLine+52, 2);
+    strncpy(mrt->configj, inputLine+60, 2);
+    mrt->configi[2] = '\0';
+    mrt->configj[2] = '\0';
+
+    /* --- Parity designation --                   -------------- */
+
+    mrt->parityi[0] = inputLine[56];
+    mrt->parityj[0] = inputLine[64];
+    mrt->parityi[1] = '\0';
+    mrt->parityj[1] = '\0';
+
+    /* --- Vibrational quantum numbers --            ------------ */
+
+    Nread = sscanf(inputLine+54, "%2d", &mrt->vi);
+    Nread = sscanf(inputLine+62, "%2d", &mrt->vj);
+
+    /* --- Subbranch (F1, F2, ...., E1, E2, ...etc) -- ---------- */
+
+    Nread = sscanf(inputLine+57, "%1d", &mrt->subi);
+    Nread = sscanf(inputLine+65, "%1d", &mrt->subj);
+    /* --- Isotope fraction for Si --                ------------ */
+
+    Nread = sscanf(inputLine+67, "%2d", &isotope);
+    switch (isotope) {
+    case 29: mrt->isotope_frac = SI_29;  break;
+    case 30: mrt->isotope_frac = SI_30;  break;
+    default: mrt->isotope_frac = 1.0;
+    }
+
+    } else if (strstr(format_string, "KURUCZ_MGH")) {
+
+    /* --- Electronic configuration --             -------------- */
+
+    strncpy(mrt->configi, inputLine+52, 2);
+    strncpy(mrt->configj, inputLine+60, 2);
+    mrt->configi[2] = '\0';
+    mrt->configj[2] = '\0';
+
+    /* --- Parity designation --                   -------------- */
+
+    mrt->parityi[0] = inputLine[56];
+    mrt->parityj[0] = inputLine[64];
+    mrt->parityi[1] = '\0';
+    mrt->parityj[1] = '\0';
+
+    /* --- Vibrational quantum numbers --            ------------ */
+
+    Nread = sscanf(inputLine+54, "%2d", &mrt->vi);
+    Nread = sscanf(inputLine+62, "%2d", &mrt->vj);
+
+    /* --- Subbranch (F1, F2, ...., E1, E2, ...etc) -- ---------- */
+
+    Nread = sscanf(inputLine+57, "%1d", &mrt->subi);
+    Nread = sscanf(inputLine+65, "%1d", &mrt->subj);
+    /* --- Isotope fraction for Si --                ------------ */
+
+    Nread = sscanf(inputLine+67, "%2d", &isotope);
+    switch (isotope) {
+    case 25: mrt->isotope_frac = MG_25;  break;
+    case 26: mrt->isotope_frac = MG_26;  break;
+    default: mrt->isotope_frac = 1.0;
+    }
 
       } else if (strstr(format_string, "KURUCZ_TIO")) {
 

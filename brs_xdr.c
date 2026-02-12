@@ -162,7 +162,7 @@ bool_t xdr_BRS(XDR *xdrs)
   }
 
   result &= xdr_vector(xdrs, (char *) atmos.backgrrecno, Nrecno,
-		       sizeof(int), (xdrproc_t) xdr_int);
+		       sizeof(long), (xdrproc_t) xdr_long);
 
   free(hasline);
   free(ispolarized);

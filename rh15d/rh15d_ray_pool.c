@@ -14,16 +14,21 @@
 #include "parallel.h"
 #include "io.h"
 
-#define WORKTAG 1
-#define DIETAG 2
+#define WORKTAG  1
+#define DIETAG   2
+#define BATCHTAG 3
 
 #ifndef REV_ID
 #define REV_ID "UNKNOWN"
 #endif
 
 /* --- Function prototypes --                          -------------- */
-void overlord(void);
-void drone(void);
+void overlord_batch_nodeaware(long *node_cursor, const long *node_end,
+                              long flush_interval, long *dispatched_out);
+int  drone_batch(PoolOutputBuf *poolbuf);
+static void compute_node_task_ranges(long *node_start, long *node_end);
+static int  next_node_for(int home, const long *node_cursor,
+                          const long *node_end, long *stolen);
 
 
 /* --- Global variables --                             -------------- */
@@ -49,9 +54,11 @@ int main(int argc, char *argv[])
   bool_t run_ray = FALSE, writej = FALSE;
 
   /* --- Set up MPI ----------------------             -------------- */
+  /* Initialize main_logfile to stderr as safe default during MPI setup */
+  mpi.main_logfile = stderr;
   initParallel(&argc, &argv, run_ray=FALSE);
   memset(&spectrum,0,sizeof(spectrum));
-  
+
   mpi.size -= 1;  /* Remove overlord from count, as it is not doing work */
   setOptions(argc, argv);
   getCPU(0, TIME_START, NULL);
@@ -81,30 +88,110 @@ int main(int argc, char *argv[])
   }
   mpi.Ntasks = 1;
   atmos.moving = TRUE;  /* To prevent moving change from column [0, 0] */
-  /* Read first atmosphere column just to get dimensions */
-  readAtmos(0, 0, &atmos, &geometry, &infile);
+
+  /* --- Populate node-shared atmosphere cache.  Must come AFTER
+     distribute_jobs (sets node_ix0/ix1, mpi.ny) and BEFORE the first
+     readAtmos so that even the dimension-discovery call is served
+     from the cache.                                                 */
+  init_atmos_node_cache(&atmos, &infile);
+
+  /* Read first atmosphere column just to get dimensions.  Use a
+     node-local column so every rank's first readAtmos hits the
+     cache instead of falling back to file I/O.                      */
+  readAtmos(mpi.xnum[mpi.node_ix0], mpi.ynum[0], &atmos, &geometry, &infile);
   if (atmos.Stokes) Bproject();
   readAtomicModels();
   readMolecularModels();
   SortLambda();
   checkValuesRayInput();
   initParallelIO(run_ray=FALSE, writej=FALSE);
-  /*//////////////////////
-  ////////////////////////
-  //////////////////////*/
+
+  /* --- Node-aware batched pool ------------------------------------
+     The overlord keeps a per-node cursor into the global taskmap; when
+     a drone reports done, the overlord serves the next task from THAT
+     drone's node's cursor, so the assigned (ix, iy) is in the node's
+     atmosphere cache and readAtmos_hdf5 never touches Lustre.  Node
+     affinity is a preference, not a partition: once a node's cursor is
+     drained its drones are served from the busiest remaining node
+     instead of idling, paying one cache miss per stolen column.  All
+     ranks meet at the collective flush every flush_interval columns,
+     drones with nothing to write participating with an empty poolbuf. */
+
+  int flush_interval = input.p15d_flush_interval;
+  if (flush_interval < 1) flush_interval = 1;
+  if ((long)flush_interval * mpi.size > mpi.total_tasks)
+    flush_interval = (int)(mpi.total_tasks / mpi.size) + 1;
+  if (flush_interval < 1) flush_interval = 1;
+
+  /* Per-node cursor and end over the global taskmap.  Only rank 0
+     uses these; drones don't need to know the task layout. */
+  long *node_cursor = NULL;
+  long *node_end    = NULL;
   if (mpi.rank == 0) {
-
-    overlord();
-
-  } else {
-
-    drone();
-
+    node_cursor = (long *) calloc((size_t) mpi.n_nodes, sizeof(long));
+    node_end    = (long *) calloc((size_t) mpi.n_nodes, sizeof(long));
+    compute_node_task_ranges(node_cursor, node_end);
   }
-  /*//////////////////////
-  ////////////////////////
-  //////////////////////*/
-  /* writeOutput(writej=FALSE); */
+
+  PoolOutputBuf poolbuf;
+  poolbuf_init(&poolbuf, flush_interval + 4);
+
+  if (mpi.rank == 0) {
+    sprintf(messageStr,
+            "Pool mode (node-aware): %ld total tasks, %d nodes, "
+            "flush every %d columns/rank\n",
+            mpi.total_tasks, mpi.n_nodes, flush_interval);
+    fprintf(mpi.main_logfile, "%s", messageStr);
+    Error(MESSAGE, "main", messageStr);
+    /* Log per-node task counts for diagnostics */
+    for (int k = 0; k < mpi.n_nodes; k++) {
+      sprintf(messageStr,
+              "  node %2d: %ld tasks (taskmap [%ld, %ld))\n",
+              k, node_end[k] - node_cursor[k], node_cursor[k], node_end[k]);
+      fprintf(mpi.main_logfile, "%s", messageStr);
+    }
+  }
+
+  int any_work_left = 1;
+  while (any_work_left) {
+    if (mpi.rank == 0) {
+      long dispatched = 0;
+      overlord_batch_nodeaware(node_cursor, node_end,
+                               (long) flush_interval, &dispatched);
+      /* Any node still has work? */
+      any_work_left = 0;
+      for (int k = 0; k < mpi.n_nodes; k++) {
+        if (node_cursor[k] < node_end[k]) { any_work_left = 1; break; }
+      }
+    } else {
+      drone_batch(&poolbuf);
+    }
+
+    /* All ranks collectively write buffered columns to disk and flush */
+    writeCollective_pool(&poolbuf, TRUE);
+    poolbuf_reset(&poolbuf);
+
+    /* Broadcast termination decision */
+    MPI_Bcast(&any_work_left, 1, MPI_INT, 0, MPI_COMM_WORLD);
+  }
+
+  if (mpi.rank == 0) {
+    free(node_cursor);
+    free(node_end);
+  }
+
+  /* Tell all drones to exit */
+  if (mpi.rank == 0) {
+    long rank;
+    for (rank = 1; rank <= mpi.size; ++rank)
+      MPI_Send(0, 0, MPI_INT, rank, DIETAG, MPI_COMM_WORLD);
+  } else {
+    MPI_Status status;
+    long dummy;
+    MPI_Recv(&dummy, 1, MPI_LONG, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+  }
+
+  poolbuf_free(&poolbuf);
   closeParallelIO(run_ray=FALSE, writej=FALSE);
   /* Frees from memory stuff used for job control */
   finish_jobs();
@@ -114,84 +201,201 @@ int main(int argc, char *argv[])
   if (mpi.rank == 0) fprintf(mpi.main_logfile, "%s", messageStr);
   Error(MESSAGE,"main",messageStr);
   printTotalCPU();
+  MPI_Info_free(&mpi.info);
   MPI_Finalize();
   return 0;
 }
 /* ------- end ---------------------------- rhf1d.c ----------------- */
 
 
-/* ------- start ---------------------------- overlord.c ------------ */
-void overlord(void) {
-  MPI_Status status;
-  int result;
-  long rank, current_task=0;
+/* ------- start --------- compute_node_task_ranges --------------- */
+static void compute_node_task_ranges(long *node_start, long *node_end) {
+/* Compute per-node [start, end) ranges in the global taskmap.  Relies
+   on get_taskmap's row-major iteration order: rows with the same ix
+   are contiguous, so all rows owned by node k form a contiguous slice.
+   Rank 0 calls this once at startup.
 
-  if (mpi.total_tasks == 1) {
-      /* Send task to first process */
-      MPI_Sendrecv(&current_task, 1, MPI_LONG, 1, WORKTAG,
-		   &result, 1, MPI_INT, 1, MPI_ANY_TAG,
-		   MPI_COMM_WORLD, &status);
-      /* Tell all the drones to exit by sending an empty message with the DIETAG. */
-     for (rank = 1; rank <= mpi.size; ++rank) {
-       MPI_Ssend(0, 0, MPI_INT, rank, DIETAG, MPI_COMM_WORLD);
-     }
-  } else {
-    /* Seed the drones; send one unit of work to each drone. */
-    for (rank = 1; rank <= mpi.size; ++rank) {
-      if (rank > mpi.total_tasks)
-	break;
-
-      /* Send it to each rank */
-      MPI_Ssend(&current_task, 1, MPI_LONG, rank, WORKTAG, MPI_COMM_WORLD);
-      ++current_task;
+   node_ix1[k] is derived from the same deterministic base/remainder
+   split used in distribute_jobs, so rank 0 does not need to
+   communicate with other ranks to learn the boundaries.             */
+  int  k;
+  long t;
+  int *node_ix1_arr = (int *) malloc((size_t) mpi.n_nodes * sizeof(int));
+  int  base = mpi.nx / mpi.n_nodes;
+  int  rem  = mpi.nx % mpi.n_nodes;
+  for (k = 0; k < mpi.n_nodes; k++) {
+    int ix0 = k * base + ((k < rem) ? k : rem);
+    int ix1 = ix0 + base + ((k < rem) ? 1 : 0);
+    node_ix1_arr[k] = ix1;
+    node_start[k]   = 0;
+    node_end[k]     = 0;
+  }
+  /* Single linear scan of the taskmap.  current_k tracks the node
+     whose slice we're accumulating; we advance it whenever we see an
+     ix that has crossed into the next node's row range. */
+  if (mpi.taskmap == NULL || mpi.total_tasks == 0) {
+    free(node_ix1_arr);
+    return;
+  }
+  k = 0;
+  node_start[0] = 0;
+  for (t = 0; t < mpi.total_tasks; t++) {
+    int ix = (int) mpi.taskmap[t][0];
+    while (k < mpi.n_nodes && ix >= node_ix1_arr[k]) {
+      node_end[k] = t;
+      k++;
+      if (k < mpi.n_nodes) node_start[k] = t;
     }
+    if (k >= mpi.n_nodes) break;
+  }
+  if (k < mpi.n_nodes) node_end[k] = mpi.total_tasks;
+  /* Any trailing nodes with no tasks get [end, end) — zero-length slice. */
+  for (k = k + 1; k < mpi.n_nodes; k++) {
+    node_start[k] = mpi.total_tasks;
+    node_end[k]   = mpi.total_tasks;
+  }
+  free(node_ix1_arr);
+}
+/* ------- end   --------- compute_node_task_ranges --------------- */
 
-    /* Loop over getting new work requests until there is no more work to be done */
-    while (current_task < mpi.total_tasks) {
-      /* Receive results from a drone */
-      MPI_Recv(&result, 1, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG,
-	       MPI_COMM_WORLD, &status);
-      /* Send the drone a new work unit */
-      MPI_Ssend(&current_task, 1, MPI_LONG, status.MPI_SOURCE, WORKTAG,
-	        MPI_COMM_WORLD);
-      /* Get the next unit of work to be done */
-      ++current_task;
-    }
+/* ------- start --------- next_node_for --------------------------- */
+static int next_node_for(int home, const long *node_cursor,
+                         const long *node_end, long *stolen)
+{
+/* Choose which node's cursor to serve a drone from.
 
-    /* There's no more work to be done, so receive all the outstanding results
-       from the drones. */
-    for (rank = 1; rank <= mpi.size; ++rank) {
-      if (rank > mpi.total_tasks)
-	break;
-      MPI_Recv(&result, 1, MPI_INT, MPI_ANY_SOURCE,
-	       MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-    }
+   Its own node first: those columns sit in the node's shared
+   atmosphere cache, so the drone never touches Lustre for them.  Once
+   that node is drained, fall back to whichever node has the most work
+   left rather than idling the drone.  A stolen column misses the cache
+   and is read from the file — that is the whole cost, and it is much
+   cheaper than parking a rank for the rest of the run.
 
-    /* Tell all the drones to exit by sending an empty message with the DIETAG. */
-    for (rank = 1; rank <= mpi.size; ++rank) {
-      MPI_Ssend(0, 0, MPI_INT, rank, DIETAG, MPI_COMM_WORLD);
+   Without this fallback the row->node binding is a hard partition, and
+   any run whose remaining work is unevenly spread over rows collapses
+   onto a few nodes.  That is the normal state of a 15D_RERUN, where
+   the leftover columns are the ones that failed to converge and are
+   clustered rather than uniform.
+
+   Returns -1 when no node has work left.                            */
+  int  k, best = -1;
+  long best_left = 0;
+
+  if (home >= 0 && home < mpi.n_nodes && node_cursor[home] < node_end[home])
+    return home;
+
+  for (k = 0; k < mpi.n_nodes; k++) {
+    long left = node_end[k] - node_cursor[k];
+    if (left > best_left) {
+      best_left = left;
+      best      = k;
     }
   }
+  if (best >= 0 && stolen != NULL) ++(*stolen);
+  return best;
+}
+/* ------- end   --------- next_node_for --------------------------- */
+
+/* ------- start ---------------------------- overlord.c ------------ */
+void overlord_batch_nodeaware(long *node_cursor, const long *node_end,
+                              long flush_interval, long *dispatched_out)
+{
+/* Node-aware dynamic dispatch for one batch.  Each drone is served at
+   most `flush_interval` tasks, taken from its own node's cursor while
+   that node still has work and from the busiest other node once it
+   does not (see next_node_for).  A drone is only excused from the
+   batch with BATCHTAG when it has spent its flush budget or no node
+   anywhere has work left.
+
+   State: node_cursor[k] advances monotonically through [start, end[k])
+   across batches, so work already dispatched in previous batches is
+   never re-sent.                                                     */
+  MPI_Status status;
+  int  result;
+  long rank;
+  long dispatched = 0;
+  long stolen = 0;
+  int  active = 0;
+
+  /* drone_got[r] counts how many tasks rank r has received this batch.
+     Used to enforce the per-drone flush_interval budget. */
+  int *drone_got = (int *) calloc((size_t) mpi.size + 1, sizeof(int));
+
+  /* --- Seed: send every drone its first task (if available) --- */
+  for (rank = 1; rank <= mpi.size; rank++) {
+    int nk = next_node_for(mpi.rank_node[rank], node_cursor, node_end,
+                           &stolen);
+    if (nk >= 0) {
+      long t = node_cursor[nk]++;
+      MPI_Send(&t, 1, MPI_LONG, rank, WORKTAG, MPI_COMM_WORLD);
+      drone_got[rank] = 1;
+      dispatched++;
+      active++;
+    } else {
+      /* No node has work left — excuse this drone from the batch. */
+      MPI_Send(0, 0, MPI_INT, rank, BATCHTAG, MPI_COMM_WORLD);
+    }
+  }
+
+  /* --- Main dispatch loop: serve more work as drones report done --- */
+  while (active > 0) {
+    MPI_Recv(&result, 1, MPI_INT, MPI_ANY_SOURCE, MPI_ANY_TAG,
+             MPI_COMM_WORLD, &status);
+    int src = status.MPI_SOURCE;
+    int nk  = -1;
+    if (drone_got[src] < (int) flush_interval)
+      nk = next_node_for(mpi.rank_node[src], node_cursor, node_end, &stolen);
+    if (nk >= 0) {
+      long t = node_cursor[nk]++;
+      MPI_Send(&t, 1, MPI_LONG, src, WORKTAG, MPI_COMM_WORLD);
+      drone_got[src]++;
+      dispatched++;
+    } else {
+      /* Drone is done for this batch (either hit flush budget or there
+         is no work anywhere).  Send BATCHTAG so it returns for flush. */
+      MPI_Send(0, 0, MPI_INT, src, BATCHTAG, MPI_COMM_WORLD);
+      active--;
+    }
+  }
+
+  if (stolen > 0) {
+    sprintf(messageStr,
+            "  batch: %ld columns dispatched, %ld served off-node "
+            "(cache miss, read from file)\n", dispatched, stolen);
+    fprintf(mpi.main_logfile, "%s", messageStr);
+  }
+
+  free(drone_got);
+  if (dispatched_out != NULL) *dispatched_out = dispatched;
 }
 /* ------- end   ---------------------------- overlord.c ------------ */
 
 /* ------- start ---------------------------- drone.c --------------- */
-void drone(void) {
+int drone_batch(PoolOutputBuf *poolbuf) {
+/* Processes columns until receiving a BATCHTAG (end of batch) or
+   DIETAG (shutdown).  Returns the tag that ended the loop. */
+
     MPI_Status status;
     bool_t write_analyze_output, equilibria_only;
     int niter, result=1;
-    long task=1;
     double deltaJ;
+    static long task = 0;
+    static bool_t first_call = TRUE;
 
-    mpi.isfirst = TRUE;
-    /* Main loop over tasks */
+    if (first_call) {
+      mpi.isfirst = TRUE;
+      first_call = FALSE;
+    }
+
+    /* Main loop over tasks in this batch */
     while (1) {
         if (mpi.stop) mpi.stop = FALSE;
         /* Receive a message from the overlord */
         MPI_Recv(&mpi.task, 1, MPI_LONG, 0, MPI_ANY_TAG,
                  MPI_COMM_WORLD, &status);
         /* Check the tag of the received message. */
-        if (status.MPI_TAG == DIETAG) return;
+        if (status.MPI_TAG == BATCHTAG) return BATCHTAG;
+        if (status.MPI_TAG == DIETAG)   return DIETAG;
 
         ++task;
 
@@ -204,7 +408,7 @@ void drone(void) {
         /* Printout some info */
         sprintf(messageStr,
                 "Process %4d: --- START task %3ld, (xi,yi) = (%3d,%3d)\n",
-                mpi.rank, task-1, mpi.xnum[mpi.ix], mpi.ynum[mpi.iy]);
+                mpi.rank, task, mpi.xnum[mpi.ix], mpi.ynum[mpi.iy]);
         fprintf(mpi.main_logfile, "%s", messageStr);
         Error(MESSAGE, "main", messageStr);
 
@@ -226,11 +430,11 @@ void drone(void) {
         if (isnan(mpi.dpopsmax[mpi.task]) || isinf(mpi.dpopsmax[mpi.task]) ||
            (mpi.dpopsmax[mpi.task] < 0) || ((mpi.dpopsmax[mpi.task] == 0) &&
            (input.NmaxIter > 0))) mpi.stop = TRUE;
-        /* In case of crash, write dummy data and proceed to next task */
+        /* In case of crash, buffer metadata and proceed to next task */
         if (mpi.stop) {
           sprintf(messageStr,
                   "Process %4d: *** SKIP  task %3ld (crashed after %d "
-                  "iterations)\n", mpi.rank, task-1, mpi.niter[mpi.task]);
+                  "iterations)\n", mpi.rank, task, mpi.niter[mpi.task]);
           fprintf(mpi.main_logfile, "%s", messageStr);
           Error(MESSAGE, "main", messageStr);
           close_Background();  /* To avoid many open files */
@@ -238,8 +442,8 @@ void drone(void) {
           mpi.stop = FALSE;
           mpi.dpopsmax[mpi.task] = 0.0;
           mpi.convergence[mpi.task] = -1;
-          /* Write MPI output and send result to overlord*/
-          writeMPI_p(task);
+          /* Buffer MPI metadata only (no ray/aux for crashed columns) */
+          poolbuf_store_mpi(poolbuf, task);
           MPI_Send(&result, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
           continue;
         }
@@ -247,12 +451,12 @@ void drone(void) {
         if (mpi.convergence[mpi.task]) {
             sprintf(messageStr,
                     "Process %4d: *** END   task %3ld iter, iterations = %3d,"
-                    " CONVERGED\n", mpi.rank, task-1, mpi.niter[mpi.task]);
+                    " CONVERGED\n", mpi.rank, task, mpi.niter[mpi.task]);
             mpi.nconv++;
         } else {
           sprintf(messageStr,
                   "Process %4d: *** END   task %3ld iter, iterations = %3d,"
-                  " NO convergence\n", mpi.rank, task-1, mpi.niter[mpi.task]);
+                  " NO convergence\n", mpi.rank, task, mpi.niter[mpi.task]);
           mpi.nnoconv++;
         }
         fprintf(mpi.main_logfile, "%s", messageStr);
@@ -266,9 +470,9 @@ void drone(void) {
           niter++;
         }
         if (mpi.convergence[mpi.task]) {
-            /* Make sure aux written before ray redefined */
-            writeAux_p();
-            writeAtmos_p();
+            /* Buffer aux + atmos data BEFORE geometry is redefined */
+            poolbuf_store_mpi(poolbuf, task);
+            poolbuf_store_aux_atmos(poolbuf);
             /* Redefine geometry just for this ray */
             atmos.Nrays     = 1;
             geometry.Nrays  = 1;
@@ -278,7 +482,8 @@ void drone(void) {
             geometry.wmu[0] = 1.0;
             spectrum.updateJ = FALSE;
             calculate_ray();
-            writeRay();
+            /* Buffer ray data after calculate_ray() populates spectrum.I */
+            poolbuf_store_ray(poolbuf);
             /* Put back previous values for geometry  */
             atmos.Nrays     = geometry.Nrays = geometry.save_Nrays;
             geometry.muz[0] = geometry.save_muz;
@@ -286,10 +491,12 @@ void drone(void) {
             geometry.muy[0] = geometry.save_muy;
             geometry.wmu[0] = geometry.save_wmu;
             spectrum.updateJ = TRUE;
+        } else {
+            /* Non-converged: buffer MPI metadata only */
+            poolbuf_store_mpi(poolbuf, task);
         }
-        /* --- Write output MPI group, send result to overlord ---------- */
-        writeMPI_p(task);
+        /* --- Send result to overlord --- */
         MPI_Send(&result, 1, MPI_INT, 0, 0, MPI_COMM_WORLD);
-    } /* End of main task loop */
+    } /* End of batch task loop */
 }
 /* ------- end   ---------------------------- drone.c ------------ */

@@ -76,9 +76,8 @@ void init_aux_new(void) {
   Atom     *atom;
   Molecule *molecule;
 
-  /* Create the file  */
-  if (( plist = H5Pcreate(H5P_FILE_ACCESS) ) < 0) HERR(routineName);
-  if (( H5Pset_fapl_mpio(plist, mpi.comm, mpi.info) ) < 0) HERR(routineName);
+  /* Create the file with Lustre-optimised parallel MPI-IO access */
+  plist = create_hdf5_fapl();
   if (( ncid = H5Fcreate(AUX_FILE, H5F_ACC_TRUNC, H5P_DEFAULT,
                          plist) ) < 0) HERR(routineName);
   if (( H5Pclose(plist) ) < 0) HERR(routineName);
@@ -424,9 +423,8 @@ void init_aux_existing(void) {
   Atom   *atom;
   Molecule *molecule;
 
-  /* Open the file with parallel MPI-IO access */
-  if (( plist = H5Pcreate(H5P_FILE_ACCESS )) < 0) HERR(routineName);
-  if (( H5Pset_fapl_mpio(plist, mpi.comm, mpi.info) ) < 0) HERR(routineName);
+  /* Open the file with Lustre-optimised parallel MPI-IO access */
+  plist = create_hdf5_fapl();
   if (( ncid = H5Fopen(AUX_FILE, H5F_ACC_RDWR, plist) ) < 0)
     HERR(routineName);
   if (( H5Pclose(plist) ) < 0) HERR(routineName);
@@ -644,10 +642,18 @@ void writeAux_all(void) {
   hsize_t  count[] = {1, 1, 1, 1};
   hsize_t  dims[4];
   hid_t    file_dspace, mem_dspace;
+  hid_t    plist_id;
   Atom      *atom;
   Molecule  *molecule;
   int        nact, task;
   long       ind = 0;
+
+  if (COLLECTIVE_IO_W && mpi.isbalanced) {
+    if ((plist_id = H5Pcreate(H5P_DATASET_XFER)) < 0) HERR(routineName);
+    if ((H5Pset_dxpl_mpio(plist_id, H5FD_MPIO_COLLECTIVE)) <0) HERR(routineName);
+  } else {
+    plist_id = H5P_DEFAULT;
+  }
 
   /* ATOM loop */
   for (nact = 0;  nact < atmos.Nactiveatom;  nact++) {
@@ -655,7 +661,7 @@ void writeAux_all(void) {
     ind = 0;   /* Index of each task inside variables */
     for (task = 0; task < mpi.Ntasks; task++) {
       /* If there was a crash, no data were written into buffer variables */
-      if (mpi.convergence[task] < 0) continue;
+      // if (mpi.convergence[task] < 0) continue;
       /* Memory dataspace */
       dims[0] = atom->Nlevel;
       dims[1] = infile.nz - mpi.zcut_hist[task];
@@ -676,10 +682,10 @@ void writeAux_all(void) {
         if (( H5Sselect_hyperslab(file_dspace, H5S_SELECT_SET, offset,
                                     NULL, count, NULL) ) < 0) HERR(routineName);
         if (( H5Dwrite(io.aux_atom_pop[nact], H5T_NATIVE_DOUBLE,
-               mem_dspace, file_dspace, H5P_DEFAULT,
+               mem_dspace, file_dspace, plist_id,
                &iobuf.n[nact][ind * atom->Nlevel]) ) < 0) HERR(routineName);
         if (( H5Dwrite(io.aux_atom_poplte[nact], H5T_NATIVE_DOUBLE,
-               mem_dspace, file_dspace, H5P_DEFAULT,
+               mem_dspace, file_dspace, plist_id,
                &iobuf.nstar[nact][ind * atom->Nlevel]) ) < 0) HERR(routineName);
         /* release dataspace resources */
         if (( H5Sclose(mem_dspace) ) < 0) HERR(routineName);
@@ -696,10 +702,10 @@ void writeAux_all(void) {
         if (( H5Sselect_hyperslab(file_dspace, H5S_SELECT_SET, offset,
                                   NULL, count, NULL) ) < 0) HERR(routineName);
         if (( H5Dwrite(io.aux_atom_RijL[nact], H5T_NATIVE_DOUBLE,
-                 mem_dspace, file_dspace, H5P_DEFAULT,
+                 mem_dspace, file_dspace, plist_id,
                  &iobuf.RijL[nact][ind * atom->Nline]) ) < 0) HERR(routineName);
         if (( H5Dwrite(io.aux_atom_RjiL[nact], H5T_NATIVE_DOUBLE,
-                 mem_dspace, file_dspace, H5P_DEFAULT,
+                 mem_dspace, file_dspace, plist_id,
                  &iobuf.RjiL[nact][ind * atom->Nline]) ) < 0) HERR(routineName);
         /* release dataspace resources */
         if (( H5Sclose(mem_dspace) ) < 0) HERR(routineName);
@@ -716,10 +722,10 @@ void writeAux_all(void) {
             if (( H5Sselect_hyperslab(file_dspace, H5S_SELECT_SET, offset,
                                     NULL, count, NULL) ) < 0) HERR(routineName);
             if (( H5Dwrite(io.aux_atom_RijC[nact], H5T_NATIVE_DOUBLE,
-                 mem_dspace, file_dspace, H5P_DEFAULT,
+                 mem_dspace, file_dspace, plist_id,
                  &iobuf.RijC[nact][ind * atom->Ncont]) ) < 0) HERR(routineName);
             if (( H5Dwrite(io.aux_atom_RjiC[nact], H5T_NATIVE_DOUBLE,
-                 mem_dspace, file_dspace, H5P_DEFAULT,
+                 mem_dspace, file_dspace, plist_id,
                  &iobuf.RjiC[nact][ind * atom->Ncont]) ) < 0) HERR(routineName);
             /* release dataspace resources */
             if (( H5Sclose(mem_dspace) ) < 0) HERR(routineName);
@@ -736,7 +742,7 @@ void writeAux_all(void) {
     ind = 0;   /* Index of each task inside variables */
     for (task = 0; task < mpi.Ntasks; task++) {
       /* If there was a crash, no data were written into buffer variables */
-      if (mpi.convergence[task] < 0) continue;
+      // if (mpi.convergence[task] < 0) continue;
       if (input.p15d_wpop) {
         /* Memory dataspace */
         dims[0] = molecule->Nv;
@@ -755,10 +761,10 @@ void writeAux_all(void) {
         if (( H5Sselect_hyperslab(file_dspace, H5S_SELECT_SET, offset,
                                   NULL, count, NULL) ) < 0) HERR(routineName);
         if (( H5Dwrite(io.aux_mol_pop[nact], H5T_NATIVE_DOUBLE,
-                mem_dspace, file_dspace, H5P_DEFAULT,
+                mem_dspace, file_dspace, plist_id,
                 &iobuf.nv[nact][ind * molecule->Nv]) ) < 0) HERR(routineName);
         if (( H5Dwrite(io.aux_mol_poplte[nact], H5T_NATIVE_DOUBLE,
-               mem_dspace, file_dspace, H5P_DEFAULT,
+               mem_dspace, file_dspace, plist_id,
               &iobuf.nvstar[nact][ind * molecule->Nv]) ) < 0) HERR(routineName);
         /* release dataspace resources */
         if (( H5Sclose(mem_dspace) ) < 0) HERR(routineName);
@@ -782,10 +788,18 @@ void writeAux_p(void) {
   hsize_t  dims[5];
   double  *coll_rates;
   hid_t    file_dspace, mem_dspace;
+  hid_t      plist_id;
   Atom      *atom;
   Molecule  *molecule;
   AtomicLine      *line;
   AtomicContinuum *continuum;
+
+  if (COLLECTIVE_IO_W && mpi.isbalanced) {
+    if ((plist_id = H5Pcreate(H5P_DATASET_XFER)) < 0) HERR(routineName);
+    if ((H5Pset_dxpl_mpio(plist_id, H5FD_MPIO_COLLECTIVE)) <0) HERR(routineName);
+  } else {
+    plist_id = H5P_DEFAULT;
+  }
 
   /* --- ATOMS ---  */
   for (nact = 0;  nact < atmos.Nactiveatom;  nact++) {
@@ -811,9 +825,9 @@ void writeAux_p(void) {
       if (( H5Sselect_hyperslab(file_dspace, H5S_SELECT_SET, offset,
                                 NULL, count, NULL) ) < 0) HERR(routineName);
       if (( H5Dwrite(io.aux_atom_pop[nact], H5T_NATIVE_DOUBLE, mem_dspace,
-                  file_dspace, H5P_DEFAULT, atom->n[0]) ) < 0) HERR(routineName);
+                  file_dspace, plist_id, atom->n[0]) ) < 0) HERR(routineName);
       if (( H5Dwrite(io.aux_atom_poplte[nact], H5T_NATIVE_DOUBLE, mem_dspace,
-             file_dspace, H5P_DEFAULT, atom->nstar[0]) ) < 0) HERR(routineName);
+             file_dspace, plist_id, atom->nstar[0]) ) < 0) HERR(routineName);
       if (( H5Sclose(mem_dspace) ) < 0) HERR(routineName);
       if (( H5Sclose(file_dspace) ) < 0) HERR(routineName);
     }
@@ -832,9 +846,9 @@ void writeAux_p(void) {
           if (( H5Sselect_hyperslab(file_dspace, H5S_SELECT_SET, offset,
                                     NULL, count, NULL) ) < 0) HERR(routineName);
           if (( H5Dwrite(io.aux_atom_RijL[nact], H5T_NATIVE_DOUBLE, mem_dspace,
-                  file_dspace, H5P_DEFAULT, line->Rij) ) < 0) HERR(routineName);
+                  file_dspace, plist_id, line->Rij) ) < 0) HERR(routineName);
           if (( H5Dwrite(io.aux_atom_RjiL[nact], H5T_NATIVE_DOUBLE, mem_dspace,
-                  file_dspace, H5P_DEFAULT, line->Rji) ) < 0) HERR(routineName);
+                  file_dspace, plist_id, line->Rji) ) < 0) HERR(routineName);
       }
       if (( H5Sclose(mem_dspace) ) < 0) HERR(routineName);
       if (( H5Sclose(file_dspace) ) < 0) HERR(routineName);
@@ -848,9 +862,9 @@ void writeAux_p(void) {
           if (( H5Sselect_hyperslab(file_dspace, H5S_SELECT_SET, offset,
                                     NULL, count, NULL) ) < 0) HERR(routineName);
           if (( H5Dwrite(io.aux_atom_RijC[nact], H5T_NATIVE_DOUBLE, mem_dspace,
-             file_dspace, H5P_DEFAULT, continuum->Rij) ) < 0) HERR(routineName);
+             file_dspace, plist_id, continuum->Rij) ) < 0) HERR(routineName);
           if (( H5Dwrite(io.aux_atom_RjiC[nact], H5T_NATIVE_DOUBLE, mem_dspace,
-             file_dspace, H5P_DEFAULT, continuum->Rji) ) < 0) HERR(routineName);
+             file_dspace, plist_id, continuum->Rji) ) < 0) HERR(routineName);
       }
       if (( H5Sclose(mem_dspace) ) < 0) HERR(routineName);
       if (( H5Sclose(file_dspace) ) < 0) HERR(routineName);
@@ -918,9 +932,9 @@ void writeAux_p(void) {
       if (( H5Sselect_hyperslab(file_dspace, H5S_SELECT_SET, offset,
                                 NULL, count, NULL) ) < 0) HERR(routineName);
       if (( H5Dwrite(io.aux_mol_pop[nact], H5T_NATIVE_DOUBLE, mem_dspace,
-            file_dspace, H5P_DEFAULT, molecule->nv[0]) ) < 0) HERR(routineName);
+            file_dspace, plist_id, molecule->nv[0]) ) < 0) HERR(routineName);
       if (( H5Dwrite(io.aux_mol_poplte[nact], H5T_NATIVE_DOUBLE, mem_dspace,
-        file_dspace, H5P_DEFAULT, molecule->nvstar[0]) ) < 0) HERR(routineName);
+        file_dspace, plist_id, molecule->nvstar[0]) ) < 0) HERR(routineName);
       if (( H5Sclose(mem_dspace) ) < 0) HERR(routineName);
       if (( H5Sclose(file_dspace) ) < 0) HERR(routineName);
     }
@@ -950,10 +964,18 @@ void readPopulations(Atom *atom) {
   hsize_t count[] = {1, 1, 1, 1};
   hsize_t dims[4];
   hid_t ncid, file_dspace, mem_dspace, pop_var;
+  hid_t      plist_id;
+
+  if (COLLECTIVE_IO_W && mpi.isbalanced) {
+    if ((plist_id = H5Pcreate(H5P_DATASET_XFER)) < 0) HERR(routineName);
+    if ((H5Pset_dxpl_mpio(plist_id, H5FD_MPIO_COLLECTIVE)) <0) HERR(routineName);
+  } else {
+    plist_id = H5P_DEFAULT;
+  }
 
   /* --- Open atom group --- */
   sprintf(group_name,(atom->ID[1] == ' ') ? "atom_%.1s" : "atom_%.2s", atom->ID);
-  if (( ncid = H5Gopen(io.aux_ncid, group_name, H5P_DEFAULT) ) < 0)
+  if (( ncid = H5Gopen(io.aux_ncid, group_name, plist_id) ) < 0)
     HERR(routineName);
   /* --- Consistency checks --- */
   /* Check that atmosID is the same */
@@ -988,7 +1010,7 @@ void readPopulations(Atom *atom) {
   }
 
   /* --- Read data --- */
-  if (( pop_var = H5Dopen2(ncid, POP_NAME, H5P_DEFAULT)) < 0)
+  if (( pop_var = H5Dopen2(ncid, POP_NAME, plist_id)) < 0)
     HERR(routineName);
   dims[0] = atom->Nlevel;
   dims[1] = atmos.Nspace;
@@ -1004,7 +1026,7 @@ void readPopulations(Atom *atom) {
   if (( H5Sselect_hyperslab(file_dspace, H5S_SELECT_SET, offset,
                             NULL, count, NULL) ) < 0) HERR(routineName);
   if (( H5Dread(pop_var, H5T_NATIVE_DOUBLE, mem_dspace,
-                file_dspace, H5P_DEFAULT, atom->n[0]) ) < 0) HERR(routineName);
+                file_dspace, plist_id, atom->n[0]) ) < 0) HERR(routineName);
   if (( H5Sclose(mem_dspace) ) < 0) HERR(routineName);
   if (( H5Sclose(file_dspace) ) < 0) HERR(routineName);
   if (( H5Dclose(pop_var) ) < 0) HERR(routineName);

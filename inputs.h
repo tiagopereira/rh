@@ -101,6 +101,7 @@ typedef struct {
   double p15d_tmax;
   bool_t p15d_wxtra, p15d_rerun, p15d_refine, p15d_zcut, p15d_wtau;
   bool_t p15d_wpop, p15d_wrates, p15d_wcrates;
+  int    p15d_flush_interval;
   double iterLimit, PRDiterLimit, metallicity, CR_factor, *wavetable;
   double prdswitch, prdsw;
   unsigned int Nxwave;
@@ -111,6 +112,35 @@ typedef struct {
   char **kurucz_line_file_name;
   int Nkurucz_files;
   pthread_attr_t thread_attr;
+  /* --- Node-partitioned pool mode (node-shared atmosphere cache) ----
+     Added at the END of the struct so existing field offsets are
+     preserved across incremental builds — old object files using a
+     stale inputs.h still find atoms_file_contents etc. at the right
+     place.  When TRUE (default), rh15d_ray_pool reads the atmosphere
+     once per node into a shared-memory window and serves every
+     readAtmos call from that cache instead of touching the file.
+     atmos_cache_cyclic: v1 uses contiguous row-based decomposition.
+     When TRUE, use cyclic row decomposition for spatial load balance.
+     Plumbed but not yet honored in v1. */
+  bool_t use_node_atmos_cache;
+  bool_t atmos_cache_cyclic;
+  /* Pool mode: when TRUE (default), writeCollective_pool uses
+     H5FD_MPIO_COLLECTIVE for the phase-2 flush; when FALSE, each rank
+     writes its own hyperslabs with H5FD_MPIO_INDEPENDENT.  Independent
+     mode is useful on filesystems where collective buffering adds more
+     overhead than it saves, or for debugging MPI-IO behaviour. */
+  bool_t pool_collective_write;
+  /* Lustre contention-reduction toggle: when TRUE (default), the
+     create_hdf5_fapl helpers pass the romio/stripe/cb_nodes MPI-IO
+     hints (built in initParallel) to H5Pset_fapl_mpio, AND enable
+     collective HDF5 metadata ops on the output FAPL.  When FALSE,
+     MPI_INFO_NULL is passed and collective metadata ops are left off
+     — toggle off to A/B against pre-42fc036/e1767d1 baseline.
+     Note: H5Pset_alignment and H5Pset_meta_block_size are always
+     applied (pure HDF5-level tuning with no behavioural side effects);
+     H5Pset_file_locking(false) is also always applied (correctness
+     requirement on Lustre, not a performance knob). */
+  bool_t mpiio_lustre_hints;
 } InputData;
 
 

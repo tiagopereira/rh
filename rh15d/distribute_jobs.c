@@ -49,6 +49,7 @@ void distribute_jobs(void)
 {
   const char routineName[] = "distribute_jobs";
   long *tasks, remain_tasks, i, j;
+  long minNtasks, maxNtasks;
   bool_t abort = FALSE;
 
   mpi.backgrrecno = 0;
@@ -119,10 +120,84 @@ void distribute_jobs(void)
   mpi.total_tasks = remain_tasks;
 
   /* Calculate tasks and distribute */
-  tasks        = get_tasks(remain_tasks, mpi.size);
-  mpi.Ntasks   = tasks[mpi.rank];
-  mpi.taskmap  = get_taskmap(remain_tasks, tasks, &mpi.my_start);
+  tasks       = get_tasks(remain_tasks, mpi.size);
+  mpi.Ntasks  = tasks[mpi.rank];
+  minNtasks   = mpi.Ntasks;
+  maxNtasks   = mpi.Ntasks;
+  mpi.taskmap = get_taskmap(remain_tasks, tasks, &mpi.my_start);
+
+  /* Find max/min Ntask per processor */
+  for (int i = 0; i < mpi.size; ++i) {
+    if (minNtasks > tasks[i]) {
+      minNtasks = tasks[i];
+    }
+    if (maxNtasks < tasks[i]) {
+      maxNtasks = tasks[i];
+    }
+  }
   free(tasks);
+
+  if (minNtasks == maxNtasks) {
+    mpi.isbalanced = true;
+  } else {
+    mpi.isbalanced = false;
+  }
+
+  /* --- Compute this node's contiguous range of reduced rows ---------
+     Each node owns rows ix in [node_ix0, node_ix1).  The split is as
+     even as possible (the first `remainder` nodes get one extra row).
+     This range is the basis for the node-shared atmosphere cache and
+     the node-local pool dispatcher.
+
+     For the rerun case the row range is the same; the actual taskmap
+     section may be sparser because converged columns are filtered out,
+     but row-major ordering of the taskmap means the entries belonging
+     to a row range are still a contiguous slice in the taskmap. */
+  {
+    int base = mpi.nx / mpi.n_nodes;
+    int rem  = mpi.nx % mpi.n_nodes;
+    if (mpi.n_nodes > mpi.nx) {
+      sprintf(messageStr,
+              "\nNumber of nodes (%d) exceeds number of reduced rows (%d).\n"
+              "  Each node must own at least one row.  Reduce node count\n"
+              "  or increase grid size in X.\n",
+              mpi.n_nodes, mpi.nx);
+      Error(ERROR_LEVEL_2, routineName, messageStr);
+    }
+    mpi.node_ix0 = mpi.node_id * base + ((mpi.node_id < rem) ? mpi.node_id : rem);
+    mpi.node_ix1 = mpi.node_ix0 + base + ((mpi.node_id < rem) ? 1 : 0);
+  }
+
+  /* Locate this node's slice of the global taskmap.  Because the
+     taskmap is built row-major over (ix, iy), entries with ix in
+     [node_ix0, node_ix1) are contiguous and we can find the slice
+     with two linear scans (cheap, runs once at startup).            */
+  mpi.node_task_start = 0;
+  mpi.node_task_count = 0;
+  if (mpi.taskmap != NULL && remain_tasks > 0) {
+    long k;
+    bool_t found = FALSE;
+    for (k = 0; k < remain_tasks; k++) {
+      if (mpi.taskmap[k][0] >= mpi.node_ix0) {
+        mpi.node_task_start = k;
+        found = TRUE;
+        break;
+      }
+    }
+    if (!found) {
+      /* Every remaining task lies in a row below this node's range, so
+         this node owns nothing.  Anchor an empty slice at the end of
+         the taskmap: leaving node_task_start at 0 would make the count
+         scan below pick up tasks belonging to lower-numbered nodes.
+         Only reachable on a rerun, where the taskmap is sparse. */
+      mpi.node_task_start = remain_tasks;
+    } else {
+      for (k = mpi.node_task_start; k < remain_tasks; k++) {
+        if (mpi.taskmap[k][0] >= mpi.node_ix1) break;
+        mpi.node_task_count++;
+      }
+    }
+  }
 
   return;
 }
@@ -229,6 +304,10 @@ void finish_jobs(void)
   free(mpi.ynum);
   if (mpi.taskmap != NULL)
     freeMatrix((void **) mpi.taskmap);
+  if (mpi.rank_node != NULL) {
+    free(mpi.rank_node);
+    mpi.rank_node = NULL;
+  }
 
 }
 /* ------- end   -------------------------- finish_jobs.c ------- --- */

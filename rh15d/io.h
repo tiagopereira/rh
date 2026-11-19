@@ -141,6 +141,11 @@
 /* Log files buffer size (in bytes) */
 #define BUFSIZ_MPILOG  52428800
 
+/* Tunning for parallel i/o */
+#define COLLECTIVE_IO_R 1
+#define COLLECTIVE_IO_W 1
+#define IO_CACHE_EVICTION 1
+
 /* For keeping the HDF5 file and variable IDs */
 typedef struct {
   /* for the J file */
@@ -185,6 +190,68 @@ typedef struct {
 
 /* Default fill value for HDF5 */
 extern const float FILLVALUE;
+
+/* --- Pool-mode output buffer for two-phase collective I/O --- */
+
+/* Buffer for one completed column in pool mode */
+typedef struct {
+    int    ix, iy;           /* Reduced grid coordinates */
+    long   task_id;          /* Sequential task number (for MPI output) */
+    int    zcut;             /* z-cut for this column */
+    int    Nspace;           /* atmos.Nspace at compute time */
+    int    niter;            /* Number of iterations */
+    int    convergence;      /* 1=converged, 0=not converged, -1=crashed */
+    double dpopsmax;         /* Max population change */
+    double *dpopsmax_hist;   /* [NmaxIter] padded with zeros */
+    int    rank;             /* Rank that computed this column */
+
+    /* --- Atmosphere data (NULL if crashed) --- */
+    double *atmos_T;         /* [Nspace] */
+    double *atmos_vz;        /* [Nspace] */
+    double *atmos_z;         /* [Nspace] */
+    double *atmos_ne;        /* [Nspace] */
+
+    /* --- Ray data (NULL unless converged) --- */
+    double *intensity;       /* [Nspect] */
+    double *stokes_Q;        /* [Nspect] or NULL */
+    double *stokes_U;        /* [Nspect] or NULL */
+    double *stokes_V;        /* [Nspect] or NULL */
+    float  *tau_one;         /* [Nspect] or NULL */
+    float  *chi;             /* [nz * nwave_sel] or NULL (row-major 2D) */
+    float  *S_ray;           /* [nz * nwave_sel] or NULL */
+    float  *Jnu;             /* [nz * nwave_sel] or NULL */
+    float  *sca;             /* [nz * nwave_sel] or NULL */
+
+    /* --- Aux data (NULL unless converged + flags enabled) --- */
+    /* Per active atom */
+    double **atom_n;         /* [Nactiveatom] -> [Nlevel * Nspace] */
+    double **atom_nstar;
+    double **atom_RijL;      /* [Nactiveatom] -> [Nline  * Nspace] */
+    double **atom_RjiL;
+    double **atom_RijC;      /* [Nactiveatom] -> [Ncont  * Nspace] */
+    double **atom_RjiC;
+    double **atom_Cij;       /* [Nactiveatom] -> [Nlevel*Nlevel*Nspace]
+                                Full collision-rate matrix, layout
+                                [i*Nlevel+j][k] = atom->C[j*Nlevel+i][k]. */
+    /* Per active molecule */
+    double **mol_nv;         /* [Nactivemol] -> [Nv * Nspace] */
+    double **mol_nvstar;
+} PoolColumnBuf;
+
+/* Dynamic array of completed columns for pool mode */
+typedef struct {
+    PoolColumnBuf *cols;     /* Array of buffered columns */
+    int            ncols;    /* Number of columns stored */
+    int            capacity; /* Allocated capacity */
+} PoolOutputBuf;
+
+void poolbuf_init(PoolOutputBuf *buf, int initial_capacity);
+void poolbuf_reset(PoolOutputBuf *buf);
+void poolbuf_free(PoolOutputBuf *buf);
+void poolbuf_store_mpi(PoolOutputBuf *buf, long task_id);
+void poolbuf_store_aux_atmos(PoolOutputBuf *buf);
+void poolbuf_store_ray(PoolOutputBuf *buf);
+void writeCollective_pool(PoolOutputBuf *buf, bool_t flush);
 
 void readSavedInput(void);
 void readSavedKeywords(void);

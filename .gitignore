@@ -14,3 +14,5 @@ rhsc3d/formal3d
 rhsc3d/rhsc3d
 rhsc3d/solveray
 rhsphere/rhsphere
+.d/*
+*.d

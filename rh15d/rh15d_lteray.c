@@ -49,6 +49,8 @@ int main(int argc, char *argv[])
   Atom *atom;
 
   /* --- Set up MPI ----------------------             -------------- */
+  /* Initialize main_logfile to stderr as safe default during MPI setup */
+  mpi.main_logfile = stderr;
   initParallel(&argc, &argv, run_ray=FALSE);
 
   setOptions(argc, argv);
@@ -166,6 +168,7 @@ int main(int argc, char *argv[])
   Error(MESSAGE, "main", messageStr);
 
   printTotalCPU();
+  MPI_Info_free(&mpi.info);
   MPI_Finalize();
 
   return 0;

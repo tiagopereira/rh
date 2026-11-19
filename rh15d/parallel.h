@@ -10,10 +10,20 @@
 #define __PARALLEL_H__
 
 #include <mpi.h>
+#include <hdf5.h>
 
 typedef struct {
   char     name[MPI_MAX_PROCESSOR_NAME], rev_id[MAX_LINE_SIZE];
-  bool_t   single_log, stop, isfirst;
+  bool_t   single_log, stop, isfirst, isbalanced;
+  /* --- May readAtmos_hdf5 issue COLLECTIVE H5Dread? ------------------
+     Only true when every rank in mpi.comm reads the same number of
+     columns in the same order, i.e. the static decomposition of
+     rh15d_ray with a balanced taskmap.  It must stay FALSE for
+     rh15d_ray_pool, where drones read on demand and a collective read
+     issued by one rank alone deadlocks.  Kept separate from
+     isbalanced, which only describes the taskmap and is also TRUE for
+     e.g. an all-converged rerun (0 tasks everywhere). */
+  bool_t   coll_atmos_read;
   int      nx, ny, backgrrecno;
   int      size, rank, namelen, ix, iy, *xnum, *ynum, *niter, zcut, ndims_z;
   int     *zcut_hist, **rh_converged, StokesMode_save, *convergence, snap_number;
@@ -23,6 +33,29 @@ typedef struct {
   FILE    *logfile, *main_logfile;
   MPI_Comm comm;
   MPI_Info info;
+  /* --- Node-level communicator (ranks sharing physical memory) ----
+     Populated by initParallel via MPI_Comm_split_type(MPI_COMM_TYPE_SHARED).
+     Used by node-partitioned pool mode and the node-shared atmosphere
+     cache.  All ranks on a node share the same node_comm; node_id is
+     a unique [0, n_nodes) index per node, the same for every rank on
+     that node. */
+  MPI_Comm node_comm;
+  int      node_rank;        /* this rank's position in node_comm        */
+  int      node_size;        /* number of ranks on this node             */
+  int      n_nodes;          /* total number of nodes in MPI_COMM_WORLD  */
+  int      node_id;          /* unique [0, n_nodes) id for this node    */
+  /* --- Node-owned slice of the global taskmap (set by distribute_jobs) -
+     Each node owns a contiguous range of reduced rows ix in [ix0, ix1).
+     node_task_start / node_task_count index into mpi.taskmap and select
+     the columns assigned to this node.  Used by the node-local pool
+     dispatcher.  Cyclic decomposition is a planned follow-up. */
+  int      node_ix0, node_ix1;
+  long     node_task_start, node_task_count;
+  /* rank_node[r] is the node_id of global rank r.  Allocated in
+     initParallel via MPI_Allgather, freed in finish_jobs.  Used by the
+     rh15d_ray_pool overlord to dispatch tasks to drones on nodes that
+     own the corresponding atmosphere rows. */
+  int     *rank_node;
 } MPI_data;
 
 void init_Background();
@@ -60,6 +93,8 @@ void writeOpacity_p(void);
 void initParallel(int *argc, char **argv[], bool_t run_ray);
 void initParallelIO(bool_t run_ray, bool_t writej);
 void closeParallelIO(bool_t run_ray, bool_t writej);
+hid_t create_hdf5_fapl(void);
+hid_t create_hdf5_fapl_indep(void);
 void UpdateAtmosDep(void);
 void RequestStop_p(void);
 bool_t StopRequested_p(void);

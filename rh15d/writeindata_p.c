@@ -78,9 +78,8 @@ void init_hdf5_indata_new(void)
       NMaxIter = input.NmaxIter;
   }
 
-  /* Create the file  */
-  if (( plist = H5Pcreate(H5P_FILE_ACCESS )) < 0) HERR(routineName);
-  if (( H5Pset_fapl_mpio(plist, mpi.comm, mpi.info) ) < 0) HERR(routineName);
+  /* Create the file with Lustre-optimised parallel MPI-IO access */
+  plist = create_hdf5_fapl();
   if (( ncid = H5Fcreate(INPUTDATA_FILE, H5F_ACC_TRUNC, H5P_DEFAULT,
                          plist) ) < 0) HERR(routineName);
   if (( H5Pclose(plist) ) < 0) HERR(routineName);
@@ -595,9 +594,8 @@ void init_hdf5_indata_existing(void)
   int     NMaxIter;
   H5T_class_t type_class;
 
-  /* Open the file with parallel MPI-IO access */
-  if (( plist = H5Pcreate(H5P_FILE_ACCESS )) < 0) HERR(routineName);
-  if (( H5Pset_fapl_mpio(plist, mpi.comm, mpi.info) ) < 0) HERR(routineName);
+  /* Open the file with Lustre-optimised parallel MPI-IO access */
+  plist = create_hdf5_fapl();
   if (( ncid = H5Fopen(INPUTDATA_FILE, H5F_ACC_RDWR, plist) ) < 0)
     HERR(routineName);
   if (( H5Pclose(plist) ) < 0) HERR(routineName);
@@ -771,6 +769,18 @@ void writeMPI_all(void) {
   hsize_t  count[] = {1, 1, 1, 1};
   hsize_t  dims[4];
   hid_t    file_dspace, mem_dspace;
+  hid_t    plist_id;
+
+  /* Set collective read */
+
+  if (COLLECTIVE_IO_W && mpi.isbalanced) {
+    if ((plist_id = H5Pcreate(H5P_DATASET_XFER)) < 0) HERR(routineName);
+    if ((H5Pset_dxpl_mpio(plist_id, H5FD_MPIO_COLLECTIVE)) <0) HERR(routineName);
+  } else {
+    plist_id = H5P_DEFAULT;
+  }
+
+  sprintf(messageStr, "Process %4d: *** Start writeMPI_all\n", mpi.rank);
 
   /* Write single values of Ntasks, one value at a time */
   dims[0] = 1;
@@ -784,16 +794,18 @@ void writeMPI_all(void) {
     if (( H5Sselect_hyperslab(file_dspace, H5S_SELECT_SET, offset,
                               NULL, count, NULL) ) < 0) HERR(routineName);
     if (( H5Dwrite(io.in_mpi_it, H5T_NATIVE_INT, mem_dspace, file_dspace,
-                   H5P_DEFAULT, &mpi.niter[task]) ) < 0) HERR(routineName);
+                   plist_id, &mpi.niter[task]) ) < 0) HERR(routineName);
     if (( H5Dwrite(io.in_mpi_conv, H5T_NATIVE_INT, mem_dspace, file_dspace,
-                H5P_DEFAULT, &mpi.convergence[task]) ) < 0) HERR(routineName);
+                plist_id, &mpi.convergence[task]) ) < 0) HERR(routineName);
     if (( H5Dwrite(io.in_mpi_zc, H5T_NATIVE_INT, mem_dspace, file_dspace,
-                  H5P_DEFAULT, &mpi.zcut_hist[task]) ) < 0) HERR(routineName);
+                  plist_id, &mpi.zcut_hist[task]) ) < 0) HERR(routineName);
     if (( H5Dwrite(io.in_mpi_dm, H5T_NATIVE_DOUBLE, mem_dspace, file_dspace,
-                   H5P_DEFAULT, &mpi.dpopsmax[task]) ) < 0) HERR(routineName);
+                   plist_id, &mpi.dpopsmax[task]) ) < 0) HERR(routineName);
     if (( H5Sclose(file_dspace) ) < 0) HERR(routineName);
   }
   if (( H5Sclose(mem_dspace) ) < 0) HERR(routineName);
+
+  sprintf(messageStr, "Process %4d: *** end writeMPI_all 1/2\n", mpi.rank);
 
   /* Write array with multiple values */
   for (task = 0; task < mpi.Ntasks; task++) {
@@ -807,7 +819,7 @@ void writeMPI_all(void) {
     if (( H5Sselect_hyperslab(file_dspace, H5S_SELECT_SET, offset,
                               NULL, count, NULL) ) < 0) HERR(routineName);
     if (( H5Dwrite(io.in_mpi_dmh, H5T_NATIVE_DOUBLE, mem_dspace, file_dspace,
-               H5P_DEFAULT, mpi.dpopsmax_hist[task]) ) < 0) HERR(routineName);
+               plist_id, mpi.dpopsmax_hist[task]) ) < 0) HERR(routineName);
     if (( H5Sclose(file_dspace) ) < 0) HERR(routineName);
     if (( H5Sclose(mem_dspace) ) < 0) HERR(routineName);
   }
@@ -824,6 +836,17 @@ void writeMPI_p(int task) {
   hsize_t  count[] = {1, 1, 1, 1};
   hsize_t  dims[4];
   hid_t    file_dspace, mem_dspace;
+  hid_t    plist_id;
+
+  /* Set collective read */
+
+  if (COLLECTIVE_IO_W && mpi.isbalanced) {
+    if ((plist_id = H5Pcreate(H5P_DATASET_XFER)) < 0) HERR(routineName);
+    if ((H5Pset_dxpl_mpio(plist_id, H5FD_MPIO_COLLECTIVE)) <0) HERR(routineName);
+  } else {
+    plist_id = H5P_DEFAULT;
+  }
+
 
   dims[0] = 1;
   if (( mem_dspace = H5Screate_simple(1, dims, NULL) ) < 0) HERR(routineName);
@@ -833,17 +856,17 @@ void writeMPI_p(int task) {
   if (( H5Sselect_hyperslab(file_dspace, H5S_SELECT_SET, offset,
                             NULL, count, NULL) ) < 0) HERR(routineName);
   if (( H5Dwrite(io.in_mpi_tm, H5T_NATIVE_INT, mem_dspace, file_dspace,
-                   H5P_DEFAULT, &mpi.rank) ) < 0) HERR(routineName);
+                   plist_id, &mpi.rank) ) < 0) HERR(routineName);
   if (( H5Dwrite(io.in_mpi_tn, H5T_NATIVE_INT, mem_dspace, file_dspace,
-                   H5P_DEFAULT, &task) ) < 0) HERR(routineName);
+                   plist_id, &task) ) < 0) HERR(routineName);
   if (( H5Dwrite(io.in_mpi_it, H5T_NATIVE_INT, mem_dspace, file_dspace,
-                   H5P_DEFAULT, &mpi.niter[0]) ) < 0) HERR(routineName);
+                   plist_id, &mpi.niter[0]) ) < 0) HERR(routineName);
   if (( H5Dwrite(io.in_mpi_conv, H5T_NATIVE_INT, mem_dspace, file_dspace,
-                   H5P_DEFAULT, &mpi.convergence[0]) ) < 0) HERR(routineName);
+                   plist_id, &mpi.convergence[0]) ) < 0) HERR(routineName);
   if (( H5Dwrite(io.in_mpi_zc, H5T_NATIVE_INT, mem_dspace, file_dspace,
-                   H5P_DEFAULT, &mpi.zcut_hist[0]) ) < 0) HERR(routineName);
+                   plist_id, &mpi.zcut_hist[0]) ) < 0) HERR(routineName);
   if (( H5Dwrite(io.in_mpi_dm, H5T_NATIVE_DOUBLE, mem_dspace, file_dspace,
-                   H5P_DEFAULT, &mpi.dpopsmax[0]) ) < 0) HERR(routineName);
+                   plist_id, &mpi.dpopsmax[0]) ) < 0) HERR(routineName);
   if (( H5Sclose(file_dspace) ) < 0) HERR(routineName);
   if (( H5Sclose(mem_dspace) ) < 0) HERR(routineName);
 
@@ -856,7 +879,7 @@ void writeMPI_p(int task) {
   if (( H5Sselect_hyperslab(file_dspace, H5S_SELECT_SET, offset,
                             NULL, count, NULL) ) < 0) HERR(routineName);
   if (( H5Dwrite(io.in_mpi_dmh, H5T_NATIVE_DOUBLE, mem_dspace, file_dspace,
-                 H5P_DEFAULT, mpi.dpopsmax_hist[0]) ) < 0) HERR(routineName);
+                 plist_id, mpi.dpopsmax_hist[0]) ) < 0) HERR(routineName);
   if (( H5Sclose(file_dspace) ) < 0) HERR(routineName);
   if (( H5Sclose(mem_dspace) ) < 0) HERR(routineName);
   return;
@@ -876,9 +899,8 @@ void readConvergence(void) {
 
   mpi.rh_converged = matrix_int(mpi.nx, mpi.ny);
 
-  /* --- Open the inputdata file --- */
-  if (( plist = H5Pcreate(H5P_FILE_ACCESS )) < 0) HERR(routineName);
-  if (( H5Pset_fapl_mpio(plist, mpi.comm, mpi.info) ) < 0) HERR(routineName);
+  /* --- Open the inputdata file with Lustre-optimised access --- */
+  plist = create_hdf5_fapl();
   if (( ncid = H5Fopen(INPUTDATA_FILE, H5F_ACC_RDONLY, plist) ) < 0)
     HERR(routineName);
   if (( H5Pclose(plist) ) < 0) HERR(routineName);
@@ -898,20 +920,22 @@ void readConvergence(void) {
     Error(WARNING, routineName, messageStr);
     }
   free(atmosID);
-  /* Check that dimension sizes match */
+  /* Check that dimension sizes match.  This must be fatal: the read
+     below pulls the whole nx*ny convergence dataset into a buffer
+     sized from the current mpi.nx/mpi.ny, so a larger grid in the file
+     overruns the heap.  A smaller one silently misaligns every column
+     index and the rerun would recompute (and overwrite) the wrong
+     columns. */
   if (( H5LTget_attribute_int(ncid, "/", "nx", &nx) ) < 0) HERR(routineName);
-  if (nx != mpi.nx) {
-    sprintf(messageStr,
-	    "Number of x points mismatch: expected %d, found %d.",
-	    mpi.nx, (int)nx);
-    Error(WARNING, routineName, messageStr);
-  }
   if (( H5LTget_attribute_int(ncid, "/", "ny", &ny) ) < 0) HERR(routineName);
-  if (ny != mpi.ny) {
+  if ((nx != mpi.nx) || (ny != mpi.ny)) {
     sprintf(messageStr,
-	    "Number of y points mismatch: expected %d, found %d.",
-	    mpi.ny, (int)ny);
-    Error(WARNING, routineName, messageStr);
+	    "Grid size mismatch with indata file: expected (nx, ny) = "
+	    "(%d, %d), found (%d, %d).\n"
+	    "  The rerun must use the same X_START/X_END/X_STEP and\n"
+	    "  Y_START/Y_END/Y_STEP as the original run.  Aborting.\n",
+	    mpi.nx, mpi.ny, (int)nx, (int)ny);
+    Error(ERROR_LEVEL_2, routineName, messageStr);
   }
   /* --- Read variable --- */
   if (( H5LTread_dataset_int(ncid_mpi, CONV_NAME,
@@ -938,10 +962,15 @@ void readSavedKeywords(void) {
   enum S_interpol_stokes saved_S_interpolation_stokes;
   double saved_p15d_tmax, saved_iterLimit, saved_PRDiterLimit;
   double saved_prdswitch, saved_prdsw;
+  /* I/O tuning keywords: these describe how this job talks to the
+     filesystem, not what it computes, so they must follow the current
+     keyword.input rather than the copy saved by the original run. */
+  bool_t saved_use_node_atmos_cache, saved_atmos_cache_cyclic;
+  bool_t saved_pool_collective_write, saved_mpiio_lustre_hints;
+  int    saved_p15d_flush_interval;
 
-  /* --- Open the inputdata file --- */
-  if (( plist = H5Pcreate(H5P_FILE_ACCESS )) < 0) HERR(routineName);
-  if (( H5Pset_fapl_mpio(plist, mpi.comm, mpi.info) ) < 0) HERR(routineName);
+  /* --- Open the inputdata file with Lustre-optimised access --- */
+  plist = create_hdf5_fapl();
   if (( ncid = H5Fopen(INPUTDATA_FILE, H5F_ACC_RDONLY, plist) ) < 0)
     HERR(routineName);
   if (( H5Pclose(plist) ) < 0) HERR(routineName);
@@ -999,6 +1028,11 @@ void readSavedKeywords(void) {
   saved_S_interpolation_stokes = input.S_interpolation_stokes;
   saved_prdsw = input.prdsw;
   saved_prdswitch = input.prdswitch;
+  saved_use_node_atmos_cache = input.use_node_atmos_cache;
+  saved_atmos_cache_cyclic = input.atmos_cache_cyclic;
+  saved_pool_collective_write = input.pool_collective_write;
+  saved_mpiio_lustre_hints = input.mpiio_lustre_hints;
+  saved_p15d_flush_interval = input.p15d_flush_interval;
   /* Overwrite non-changeable keyword options with saved ones */
   readInput(input.keyword_file_contents);
   /* Put back changeable keyword options */
@@ -1023,6 +1057,11 @@ void readSavedKeywords(void) {
   input.S_interpolation_stokes = saved_S_interpolation_stokes;
   input.prdsw = saved_prdsw;
   input.prdswitch = saved_prdswitch;
+  input.use_node_atmos_cache = saved_use_node_atmos_cache;
+  input.atmos_cache_cyclic = saved_atmos_cache_cyclic;
+  input.pool_collective_write = saved_pool_collective_write;
+  input.mpiio_lustre_hints = saved_mpiio_lustre_hints;
+  input.p15d_flush_interval = saved_p15d_flush_interval;
   return;
 }
 
@@ -1038,9 +1077,8 @@ void readSavedInput(void) {
   H5T_class_t type_class;
 
 
-  /* --- Open the inputdata file --- */
-  if (( plist = H5Pcreate(H5P_FILE_ACCESS )) < 0) HERR(routineName);
-  if (( H5Pset_fapl_mpio(plist, mpi.comm, mpi.info) ) < 0) HERR(routineName);
+  /* --- Open the inputdata file with Lustre-optimised access --- */
+  plist = create_hdf5_fapl();
   if (( ncid = H5Fopen(INPUTDATA_FILE, H5F_ACC_RDONLY, plist) ) < 0)
     HERR(routineName);
   if (( H5Pclose(plist) ) < 0) HERR(routineName);

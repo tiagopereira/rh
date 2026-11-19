@@ -53,7 +53,114 @@ void initParallel(int *argc, char **argv[], bool_t run_ray) {
   MPI_Comm_rank(MPI_COMM_WORLD, &mpi.rank);
   MPI_Get_processor_name(mpi.name, &mpi.namelen);
   mpi.comm = MPI_COMM_WORLD;
-  mpi.info = MPI_INFO_NULL;
+
+  /* --- Build node-level communicator (ranks sharing physical memory) ---
+     MPI_COMM_TYPE_SHARED partitions COMM_WORLD into groups of ranks that
+     can use MPI_Win_allocate_shared with each other.  Used downstream by
+     node-partitioned pool mode and the shared atmosphere cache. */
+  MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, mpi.rank,
+                      MPI_INFO_NULL, &mpi.node_comm);
+  MPI_Comm_rank(mpi.node_comm, &mpi.node_rank);
+  MPI_Comm_size(mpi.node_comm, &mpi.node_size);
+
+  /* --- Compute n_nodes and a unique [0, n_nodes) id per node ---
+     Every rank participates in the all-reduce; only node-rank 0 contributes
+     a 1, others contribute 0, so the sum equals the number of nodes.
+     The exclusive prefix sum over those 0/1 values gives a stable node_id
+     consistent across all ranks on the same node. */
+  {
+    int is_node_root = (mpi.node_rank == 0) ? 1 : 0;
+    int my_node_id   = 0;
+    MPI_Allreduce(&is_node_root, &mpi.n_nodes, 1, MPI_INT, MPI_SUM,
+                  MPI_COMM_WORLD);
+    MPI_Exscan(&is_node_root, &my_node_id, 1, MPI_INT, MPI_SUM,
+               MPI_COMM_WORLD);
+    if (mpi.rank == 0) my_node_id = 0;  /* MPI_Exscan leaves rank 0 unset */
+    /* Broadcast the node_id from node_rank 0 to all ranks on this node */
+    MPI_Bcast(&my_node_id, 1, MPI_INT, 0, mpi.node_comm);
+    mpi.node_id = my_node_id;
+  }
+
+  /* Initialise node-task slice fields; populated later by distribute_jobs. */
+  mpi.node_ix0         = 0;
+  mpi.node_ix1         = 0;
+  mpi.node_task_start  = 0;
+  mpi.node_task_count  = 0;
+
+  /* Collective atmosphere reads are opt-in per binary (see parallel.h).
+     Independent reads are always safe, so that is the default. */
+  mpi.coll_atmos_read  = FALSE;
+
+  /* --- Build rank -> node_id mapping ---
+     Every rank contributes its node_id; the resulting array lets the
+     pool overlord route tasks for node k only to drones on node k. */
+  mpi.rank_node = (int *) malloc((size_t) mpi.size * sizeof(int));
+  MPI_Allgather(&mpi.node_id, 1, MPI_INT,
+                mpi.rank_node, 1, MPI_INT, MPI_COMM_WORLD);
+
+  /* --- MPI-IO hints optimised for Lustre parallel filesystem ---
+     striping_unit and striping_factor inform the MPI-IO driver of the
+     Lustre layout so collective buffers can be aligned to stripe
+     boundaries; cb_nodes = 2*n_nodes dedicates two aggregators per node,
+     which avoids cross-node contention on the OSS/OST paths.
+
+     The Lustre-specific values must match the actual `lfs setstripe`
+     layout of the output directory.  Defaults below assume
+         lfs setstripe -c 24 -S 32M output/
+     (the value used in the reference production job script).  Each
+     default can be overridden per-run via env var, so you do not need
+     to rebuild to match a different Lustre layout:
+
+         RH_LUSTRE_STRIPE_COUNT  (default 24)     -> striping_factor
+         RH_LUSTRE_STRIPE_SIZE   (default 32 MB)  -> striping_unit   [bytes]
+         RH_MPIIO_CB_BUFFER_SIZE (default 256 MB) -> cb_buffer_size  [bytes]
+         RH_MPIIO_CB_NODES       (default 2*mpi.n_nodes) -> cb_nodes
+
+     The romio_cb_* / romio_ds_* booleans are not env-overridable
+     here — flip them via ROMIO_HINTS if you need to experiment.
+
+     Gated by keyword 15D_MPIIO_LUSTRE_HINTS (default TRUE).  When
+     FALSE, the create_hdf5_fapl helpers below pass MPI_INFO_NULL to
+     H5Pset_fapl_mpio and the MPI-IO driver falls back to ROMIO
+     defaults — use this to A/B against pre-42fc036/e1767d1 baseline.
+     NOTE: readInput has not run yet at this point, so mpi.info is
+     always populated here; the keyword only affects whether it is
+     passed into the FAPL. */
+  {
+    const char *s;
+    char buf[32];
+    const char *stripe_count  = (s = getenv("RH_LUSTRE_STRIPE_COUNT"))  ? s : "24";
+    const char *stripe_size   = (s = getenv("RH_LUSTRE_STRIPE_SIZE"))   ? s : "33554432";
+    const char *cb_buf_size   = (s = getenv("RH_MPIIO_CB_BUFFER_SIZE")) ? s : "268435456";
+    const char *cb_nodes_env  = getenv("RH_MPIIO_CB_NODES");
+
+    MPI_Info_create(&mpi.info);
+    MPI_Info_set(mpi.info, "romio_cb_write",  "enable");   /* collective buffering */
+    MPI_Info_set(mpi.info, "romio_ds_write",  "disable");  /* no data sieving     */
+    MPI_Info_set(mpi.info, "romio_cb_read",   "enable");
+    MPI_Info_set(mpi.info, "romio_ds_read",   "disable");
+    MPI_Info_set(mpi.info, "cb_buffer_size",  (char *) cb_buf_size);
+    MPI_Info_set(mpi.info, "striping_unit",   (char *) stripe_size);
+    MPI_Info_set(mpi.info, "striping_factor", (char *) stripe_count);
+    if (cb_nodes_env != NULL) {
+      MPI_Info_set(mpi.info, "cb_nodes", (char *) cb_nodes_env);
+    } else {
+      snprintf(buf, sizeof(buf), "%d", 2 * mpi.n_nodes);
+      MPI_Info_set(mpi.info, "cb_nodes", buf);             /* 2 aggregators / node */
+    }
+    MPI_Info_set(mpi.info, "cb_config_list", "*:2");        /* 2 aggr per host    */
+
+    if (mpi.rank == 0) {
+      /* Log files are not open yet — write straight to stderr so the
+         hints appear in the SLURM output without dereferencing the
+         still-NULL commandline.logfile / mpi.main_logfile. */
+      fprintf(stderr,
+              "MPI-IO Lustre hints: stripe_count=%s stripe_size=%s "
+              "cb_buffer_size=%s cb_nodes=%s\n",
+              stripe_count, stripe_size, cb_buf_size,
+              cb_nodes_env ? cb_nodes_env : buf);
+    }
+  }
   /* Open log files */
   sprintf(logfile, (run_ray) ? RAY_MPILOG_TEMPLATE : MPILOG_TEMPLATE, mpi.rank);
   if ((mpi.logfile = fopen(logfile, "w")) == NULL) {
@@ -79,6 +186,68 @@ void initParallel(int *argc, char **argv[], bool_t run_ray) {
   return;
 }
 /* ------- end   --------------------------   initParallel.c --   --- */
+
+/* ------- begin --------------------------   create_hdf5_fapl.c  --- */
+hid_t create_hdf5_fapl(void) {
+/* Creates an HDF5 file access property list optimised for Lustre,
+   with collective metadata enabled (for output files where all ranks
+   participate in I/O together).
+   Caller is responsible for closing the returned plist with H5Pclose.
+
+   Keyword 15D_MPIIO_LUSTRE_HINTS (default TRUE) toggles the two
+   Lustre-specific behavioural knobs:
+     - info arg to H5Pset_fapl_mpio: mpi.info (romio + stripe hints
+       built in initParallel) when TRUE, MPI_INFO_NULL when FALSE
+     - collective HDF5 metadata ops: enabled when TRUE, off when FALSE
+   H5Pset_alignment and H5Pset_meta_block_size are always applied
+   (pure HDF5-level tuning, no behavioural side effects).
+   H5Pset_file_locking is always disabled (correctness on Lustre). */
+  const char routineName[] = "create_hdf5_fapl";
+  hid_t plist;
+  MPI_Info info_arg = input.mpiio_lustre_hints ? mpi.info : MPI_INFO_NULL;
+
+  if (( plist = H5Pcreate(H5P_FILE_ACCESS) ) < 0) HERR(routineName);
+  if (( H5Pset_fapl_mpio(plist, mpi.comm, info_arg) ) < 0) HERR(routineName);
+  /* Align HDF5 objects to 32 MB boundaries to match Lustre stripe size,
+     threshold 0 means all allocations are aligned */
+  if (( H5Pset_alignment(plist, 0, 33554432) ) < 0) HERR(routineName);
+  /* Aggregate metadata allocations into 8 MB blocks to reduce Lustre
+     metadata operations */
+  if (( H5Pset_meta_block_size(plist, 8388608) ) < 0) HERR(routineName);
+  if (input.mpiio_lustre_hints) {
+    /* Collective metadata I/O: does NOT synchronise data writes, only
+       makes HDF5 metadata operations collective, which greatly reduces
+       metadata contention on Lustre (available since HDF5 1.10). */
+    if (( H5Pset_all_coll_metadata_ops(plist, 1) ) < 0) HERR(routineName);
+    if (( H5Pset_coll_metadata_write(plist, 1) ) < 0) HERR(routineName);
+  }
+  /* Disable HDF5 file locking — Lustre handles concurrency itself, and the
+     internal lock files (*.loc) cause filesystem contention.  This is the
+     programmatic equivalent of HDF5_USE_FILE_LOCKING=FALSE and works even
+     when the env var is not propagated to MPI ranks. */
+  if (( H5Pset_file_locking(plist, false, false) ) < 0) HERR(routineName);
+  return plist;
+}
+
+hid_t create_hdf5_fapl_indep(void) {
+/* Creates an HDF5 file access property list optimised for Lustre,
+   WITHOUT collective metadata.  Use for files that are read independently
+   by individual ranks (e.g. atmosphere input in pool mode).
+   Honours 15D_MPIIO_LUSTRE_HINTS for the MPI-IO info arg. */
+  const char routineName[] = "create_hdf5_fapl_indep";
+  hid_t plist;
+  MPI_Info info_arg = input.mpiio_lustre_hints ? mpi.info : MPI_INFO_NULL;
+
+  if (( plist = H5Pcreate(H5P_FILE_ACCESS) ) < 0) HERR(routineName);
+  if (( H5Pset_fapl_mpio(plist, mpi.comm, info_arg) ) < 0) HERR(routineName);
+  if (( H5Pset_alignment(plist, 0, 33554432) ) < 0) HERR(routineName);
+  if (( H5Pset_meta_block_size(plist, 8388608) ) < 0) HERR(routineName);
+  /* No collective metadata — ranks read independently */
+  /* Disable HDF5 file locking (see comment in create_hdf5_fapl) */
+  if (( H5Pset_file_locking(plist, false, false) ) < 0) HERR(routineName);
+  return plist;
+}
+/* ------- end   --------------------------   create_hdf5_fapl.c  --- */
 
 /* ------- begin --------------------------   initParallelIO.c    --- */
 void initParallelIO(bool_t run_ray, bool_t writej) {
@@ -688,9 +857,10 @@ void writeOutput(bool_t writej) {
     sprintf(messageStr, "Process %4d: --- START output\n", mpi.rank);
     fprintf(mpi.main_logfile, "%s", messageStr);
     Error(MESSAGE, "main", messageStr);
-
     writeMPI_all();
+    sprintf(messageStr, "Process %4d: *** END MPI-output\n", mpi.rank);
     writeAux_all();
+    sprintf(messageStr, "Process %4d: *** END Aux-all-output\n", mpi.rank);
 
     sprintf(messageStr, "Process %4d: *** END output\n", mpi.rank);
     fprintf(mpi.main_logfile, "%s", messageStr);

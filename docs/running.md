@@ -2,8 +2,9 @@
 
 ## Binaries and execution {#binaries-label}
 
-Compilation should produce three executables: `rh15d_ray_pool`,
-`rh15d_ray`, and `rh15d_lteray`. The latter is a special case for
+Compilation produces three solver executables: `rh15d_ray_pool`,
+`rh15d_ray`, and `rh15d_lteray`.
+The LTE solver is a special case for
 running only in LTE. The other two are the main programs. They represent
 two different modes of job distribution: *normal* and
 *pool*.
@@ -61,6 +62,11 @@ command. Some examples:
     mpiexec ./rh15d_ray_pool    # use in Pleiades
     aprun -B ./rh15d_ray        # use in Hexagon or other Cray
 
+The parallel I/O implementation requires parallel HDF5 1.14 or newer
+(`H5Dread_multi`) and MPI-3 shared-memory support. The number of nodes
+must not exceed the number of selected x rows, even with the atmosphere
+cache disabled.
+
 ## The run directory
 
 !!! warning
@@ -105,38 +111,110 @@ overwritten. At the start of the execution, the output files are written
 with a special a fill value. This means that the disk space for the full
 output must be available at the start of the run, and no CPU time will
 be wasted if at the end of the run there is not enough disk space. The
-files are usually written every time a process finishes work on a given
-column. The fill value arrays are overwritten with the data. One
-advantage of this method is that even if the system crashes or the
-program stops, it is possible to recover the results already written
-(and a re-run can be performed for just the missing columns).
+files are updated by replacing fill values with computed data.
+In pool mode, workers buffer completed columns and all ranks meet for a
+coordinated output batch. Each worker contributes at most
+`15D_FLUSH_INTERVAL` columns (default 16); the overlord and workers with
+no output still participate with empty selections. Each batch is flushed
+before computation resumes, with payload and histories flushed before
+convergence flags are written. Normal and LTE modes retain independent
+per-column writes.
 
-All the processes write asynchronously to all the output files. In some
-cases this can cause contention in the filesystem, with many processes
-trying to access the same data at the same time. In the worst case
-scenario, the contention can create bottlenecks which practically stop
-the execution. Therefore, it is highly recommended that the users tune
-their filesystem for the typical loads of RH. Many supercomputers make
-use of Lustre, a parallel filesystem. With Lustre, resources such as
-files can be divided in different stripes that can be placed in several
-different machines (OSTs). For running RH with more than 500 processes,
-one should use as many OSTs as available in the system, and select the
-lustre stripe size to the typical amount of data written to a file per
-simulation column. The stripe can set with the `lfs
-setstripe` command:
+A re-run can recover completed output and recompute missing or
+non-converged columns. Columns still buffered in memory when a job stops
+are not saved. A larger flush interval reduces the number of output
+batches, but increases memory use, synchronization delays, and the amount
+of work that may need to be repeated.
+
+## Parallel I/O tuning
+
+The runtime keywords and defaults are listed in [input files](input.md).
+Pool output uses collective data transfers by default. Setting
+`15D_POOL_COLLECTIVE_WRITE = FALSE` retains the same coordinated batches
+but switches their data transfers to independent mode. This is useful
+for comparing performance on different filesystems. Legacy writes and
+population reads remain independent; a balanced task count alone does
+not make their collective call order safe.
+
+### Node-shared atmosphere cache
+
+`15D_USE_NODE_ATMOS_CACHE = TRUE` loads each node's contiguous slab of
+the selected HDF5 atmosphere snapshot into MPI shared memory. The pool
+dispatcher prefers node-local work, then lets idle workers steal columns
+from other nodes. Local reads use memory copies; stolen columns outside
+the cache use independent HDF5 file reads. Pool atmosphere reads are
+never collective because workers read at different times and the
+overlord does not participate in their reads.
+
+The cache is disabled by default. Enable it only when each node has
+enough memory for its atmosphere slab in addition to the solver and
+output buffers. It stores full-depth columns, before any temperature
+cut, and is shared by the ranks on that node. It is not used for
+non-HDF5 input or by `rh15d_ray` and `rh15d_lteray`.
+`15D_ATMOS_CACHE_CYCLIC` is reserved and currently has no effect.
+
+### Lustre layout and MPI-IO hints
+
+Many supercomputers use Lustre, which distributes file stripes across
+object storage targets (OSTs). Tune striping for the workload and the
+filesystem rather than assuming that the largest stripe count is best.
+Set the layout **before** creating output files, for example with:
 
     lfs setstripe -s stripe_size -c stripe_count -o stripe_offset directory|filename
 
-It can be run per file (e.g. `output_ray.hdf5`), or for the whole
-`output` directory. Using a stripe count of `-1` will ensure that the
-maximum number of OSTs is used. For the typical files RH 1.5D produces,
-it is usually ok to apply the same Lustre settings to the whole `output`
-directory, and the following settings seem to reasonable (tested on
-Betzy and Pleiades):
+Directory settings apply to newly created files; they do not change the
+layout of files already present for a re-run. The built-in MPI-IO hint
+defaults assume `lfs setstripe -c 24 -S 32M output/`. They are tuning
+defaults, not a requirement or a guarantee that the MPI library will
+honour them. Override them to match the actual file layout and site
+recommendations:
 
-    lfs setstripe -S 8M -c -1 output/
+| Environment variable | Default | MPI-IO hint | Meaning |
+|:---------------------|:--------|:------------|:--------|
+| `RH_LUSTRE_STRIPE_COUNT` | `24` | `striping_factor` | Stripe count; match the Lustre layout. |
+| `RH_LUSTRE_STRIPE_SIZE` | `33554432` (32 MiB) | `striping_unit` | Stripe size in bytes. |
+| `RH_MPIIO_CB_BUFFER_SIZE` | `268435456` (256 MiB) | `cb_buffer_size` | Collective-buffer size per aggregator. |
+| `RH_MPIIO_CB_NODES` | Twice the number of nodes | `cb_nodes` | Requested total number of aggregators. |
 
-Similarly, the directory where you will store the input atmospheres, and
+These variables are read once during MPI initialization and logged by
+rank 0, even when hints are disabled. They are passed to HDF5 only when
+`15D_MPIIO_LUSTRE_HINTS = TRUE`. For example:
+
+```bash
+export RH_LUSTRE_STRIPE_COUNT=$(lfs getstripe -c output/)
+export RH_LUSTRE_STRIPE_SIZE=$(lfs getstripe -S output/)
+srun ./rh15d_ray_pool
+```
+
+For a re-run, query the existing files if their layout differs from the
+directory default. Ensure environment variables reach all MPI ranks.
+The application also sets `romio_cb_write=enable`,
+`romio_cb_read=enable`, `romio_ds_write=disable`,
+`romio_ds_read=disable`, and `cb_config_list=*:2`. These values have no
+application-level environment overrides. MPI-library hint files are
+implementation-specific and may not override explicitly supplied hints.
+
+HDF5 tuning remains active even with MPI-IO hints disabled: 32 MiB
+allocation alignment, 8 MiB metadata blocks, and file locking disabled.
+`15D_MPIIO_LUSTRE_HINTS = TRUE` also enables collective metadata
+operations on output files; setting it to `FALSE` disables them.
+Atmosphere input metadata remains independent in either case. Turning
+off the runtime toggles therefore does **not** restore the old I/O
+implementation: batched output, consolidated atmosphere reads, and
+node-aware scheduling remain in place.
+
+To compare the toggleable optimizations, change one keyword at a time.
+A configuration with the collective-transfer, cache, and hint toggles
+disabled is:
+
+```text
+15D_POOL_COLLECTIVE_WRITE = FALSE
+15D_USE_NODE_ATMOS_CACHE  = FALSE
+15D_MPIIO_LUSTRE_HINTS    = FALSE
+15D_FLUSH_INTERVAL       = 16
+```
+
+The directory where you will store the input atmospheres, and
 the `scratch` directory can also benefit from Lustre striping. For
 `scratch`, because most files there are small, it is recommended to use
 a stripe count of 1.
@@ -301,4 +379,3 @@ The different options are:
     execution, the code will wait for some periods and try and relaunch the
     code. For example, if one of the atmosphere files does not exist,
     `runtools.py` will try three times and then proceed to the next file.
-

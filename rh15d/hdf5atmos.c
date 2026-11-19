@@ -31,6 +31,7 @@ static void node_cache_free(void);
 
 /* --- Global variables --                             -------------- */
 extern MPI_data mpi;
+extern Geometry geometry;
 extern InputData input;
 extern char messageStr[];
 
@@ -611,6 +612,7 @@ void init_hdf5_atmos(Atmosphere *atmos, Geometry *geometry,
    subsequent calls are no-ops.                                     */
 void init_atmos_node_cache(Atmosphere *atmos, Input_Atmos_file *infile) {
   if (!input.use_node_atmos_cache) return;
+  if (geometry.atmos_format != HDF5) return;
   if (mpi.n_nodes <= 0 || mpi.ny <= 0) return;
   if (mpi.node_ix1 <= mpi.node_ix0)    return;
   if (node_cache.initialized)          return;
@@ -820,6 +822,8 @@ void readAtmos_hdf5(int xi, int yi, Atmosphere *atmos, Geometry *geometry,
     mspaces[ndset] = mem_1d;
     bufs   [ndset] = atmos->vturb;
     ndset++;
+  } else {
+    memset(atmos->vturb, 0, full_nz * sizeof(double));
   }
 
   /* Magnetic field */

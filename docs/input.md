@@ -45,6 +45,11 @@ The new `keyword.input` options for the 1.5D version are:
 |  `15D_WRITE_CRATES`        | `FALSE`          |  If `TRUE`, will write the collisional rates for each active atom to `output_aux.hdf5`.  |
 |  `15D_WRITE_TAU1`          | `FALSE`           | If `TRUE`, will write the height of tau=1 to `output_ray.hdf5`, for all wavelengths (this takes up as much space as the intensity).  |
 |  `15D_RERUN`               | `FALSE`           | If `TRUE`, will rerun for non-converged columns.  |
+|  `15D_POOL_COLLECTIVE_WRITE` | `TRUE`            | In pool mode, use collective HDF5 data transfers during coordinated output batches. If `FALSE`, use independent transfers; batching and participation by all ranks remain unchanged. |
+|  `15D_FLUSH_INTERVAL`       | `16`              | Maximum number of columns buffered per worker before a coordinated pool output batch. Values below 1 are treated as 1; small workloads may reduce the effective interval. Larger values use more memory and delay saving completed columns. |
+|  `15D_USE_NODE_ATMOS_CACHE` | `FALSE`           | In pool mode, load each node's HDF5 atmosphere slab into MPI shared memory. Local columns use the cache; stolen columns outside the slab fall back to independent file reads. Ignored for non-HDF5 atmosphere input and by the normal/LTE binaries. |
+|  `15D_ATMOS_CACHE_CYCLIC`   | `FALSE`           | Reserved for cyclic row decomposition. Not implemented: setting it has no effect; node slabs remain contiguous. |
+|  `15D_MPIIO_LUSTRE_HINTS`   | `TRUE`            | Pass the configured MPI-IO hints to HDF5 file opens and enable collective metadata operations on output files. If `FALSE`, use the MPI library's defaults and independent metadata access. Atmosphere input metadata remains independent in either case. HDF5 alignment, metadata block size, and file-locking settings remain unchanged. See [parallel I/O tuning](running.md#parallel-io-tuning) for environment variables and filesystem guidance. |
 |  `15D_DEPTH_ZCUT`          | `TRUE`            | If `TRUE`, will perform a cut in z for  points above a threshold temperature  |
 |  `15D_TMAX_CUT`            | `-1`             |  Threshold temperature (in K) over which the above depth cut ids made. If < 0, no temperature cut will be made.  |
 |  `15D_DEPTH_REFINE`        | `FALSE`          |  If `TRUE`, will perform an optimisation of the depth scale, based on optical depth, density and temperature gradients.  |
@@ -128,8 +133,9 @@ The atom files have the following basic structure:
 
 The atmosphere files for RH 1.5D are a significant departure from RH.
 They are written in the flexible and self-describing
-[HDF5](https://www.hdfgroup.org/HDF5/) format. They can be written with
-any version, except the 1.10.x development branch.
+[HDF5](https://www.hdfgroup.org/HDF5/) format. The runtime requires a
+parallel HDF5 1.14 or newer library; atmosphere files do not need to have
+been written with that same version.
 
 The atmosphere files contain all the atmospheric variables necessary for
 RH 1.5D, and they may contain one or more simulation snapshots. The
@@ -169,7 +175,7 @@ The atmosphere file can contain the following variables:
   `snapshot_number`       | `(nt)`                   |   None    |   The snapshot number is an array of integers to identify each snapshot in the output files.
   `temperature`          |  `(nt, nx, ny, nz)`      |    K       |
   `velocity_z`           |  `(nt, nx, ny, nz)`      |    m s^-1^  |  Vertical component of velocity. **Positive velocity is upflow.**
-  `velocity_turbulent`   |  `(nt, nx, ny, nz)`      |    m s^-1^  |  Turbulent velocity (microturbulence).
+  `velocity_turbulent`   |  `(nt, nx, ny, nz)`      |    m s^-1^  |  Turbulent velocity (microturbulence). **Optional**; if absent, zero is used before applying `VTURB_MULTIPLIER` and `VTURB_ADD`.
   `z`                    |  `(nt, nx, ny, nz)` or  `(nt, nz)` |     m     |     Height grid. Can vary with column and snapshot. First `nz` index is **top of the atmosphere** (closest to observer).
 
 

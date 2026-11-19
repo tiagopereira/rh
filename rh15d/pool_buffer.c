@@ -903,6 +903,8 @@ void writeCollective_pool(PoolOutputBuf *buf, bool_t flush) {
                           io.in_mpi_conv, io.in_mpi_zc, io.in_mpi_dm};
 
     for (int d = 0; d < 6; d++) {
+      /* Publish convergence only after all payload datasets are written. */
+      if (d == 3) continue;
       hsize_t mem_total = nall;
       void *membuf = NULL;
       hid_t mem_type;
@@ -920,7 +922,6 @@ void writeCollective_pool(PoolOutputBuf *buf, bool_t flush) {
               case 0: ibuf[c] = all_cols[c].rank;         break;
               case 1: ibuf[c] = (int)all_cols[c].task_id; break;
               case 2: ibuf[c] = all_cols[c].niter;        break;
-              case 3: ibuf[c] = all_cols[c].convergence;  break;
               case 4: ibuf[c] = all_cols[c].zcut;         break;
             }
           }
@@ -1013,16 +1014,19 @@ void writeCollective_pool(PoolOutputBuf *buf, bool_t flush) {
               conv_cols, nconv, lead_line, 1, col_ptrs);
         }
 
-        /* Continuum rates: 2 datasets × 1 H5Dwrite each */
-        hid_t cont_dsets[2] = {io.aux_atom_RijC[nact],
-                               io.aux_atom_RjiC[nact]};
-        for (int r = 0; r < 2; r++) {
-          for (c = 0; c < nconv; c++) {
-            col_ptrs[c] = (r == 0) ? conv_cols[c].atom_RijC[nact]
-                                   : conv_cols[c].atom_RjiC[nact];
+        /* Continuum datasets are only created for atoms with continua.
+           This atom-model condition is identical on every MPI rank. */
+        if (atom->Ncont > 0) {
+          hid_t cont_dsets[2] = {io.aux_atom_RijC[nact],
+                                 io.aux_atom_RjiC[nact]};
+          for (int r = 0; r < 2; r++) {
+            for (c = 0; c < nconv; c++) {
+              col_ptrs[c] = (r == 0) ? conv_cols[c].atom_RijC[nact]
+                                     : conv_cols[c].atom_RjiC[nact];
+            }
+            write_dataset_collective_lead(cont_dsets[r], plist_id,
+                conv_cols, nconv, lead_cont, 1, col_ptrs);
           }
-          write_dataset_collective_lead(cont_dsets[r], plist_id,
-              conv_cols, nconv, lead_cont, 1, col_ptrs);
         }
 
         free(col_ptrs);
@@ -1070,22 +1074,39 @@ void writeCollective_pool(PoolOutputBuf *buf, bool_t flush) {
   }
 
   /* --- Cleanup --- */
-  if (( H5Pclose(plist_id) ) < 0) HERR(routineName);
   free(conv_cols);
 
-  /* Flush HDF5 files only on last batch (files are flushed at close).
-
-     Order matters for restartability: the convergence flags live in the
-     indata file and are what a rerun trusts to decide a column is done.
-     Flush the payload (ray, aux) first so that a job killed mid-flush
-     can only ever lose the flag of a column whose data is already on
-     disk — that column is simply recomputed.  The reverse order can
-     leave a column flagged converged whose populations were never
-     written, and the rerun then skips it forever. */
+  /* A rerun trusts the convergence flags in indata.  When flushing a
+     batch, flush its payload and history BEFORE writing those flags,
+     not merely before flushing them: H5Dwrite may reach disk immediately.
+     Pool mode requests this for every batch.  Without flush, persistence
+     is deferred to file close and interruption recovery is not assured. */
   if (flush) {
     if (( H5Fflush(io.aux_ncid, H5F_SCOPE_LOCAL) ) < 0) HERR(routineName);
     if (( H5Fflush(io.ray_ncid, H5F_SCOPE_LOCAL) ) < 0) HERR(routineName);
     if (( H5Fflush(io.in_ncid,  H5F_SCOPE_LOCAL) ) < 0) HERR(routineName);
+  }
+  /* Required even with independent data transfers: every rank's payload
+     must be complete before any rank can publish a completion flag. */
+  MPI_Barrier(mpi.comm);
+
+  {
+    hsize_t count2[2] = {1, 1};
+    int nall = buf->ncols;
+    int *convergence = NULL;
+    if (nall > 0) {
+      convergence = (int *) malloc(nall * sizeof(int));
+      for (c = 0; c < nall; c++)
+        convergence[c] = buf->cols[c].convergence;
+    }
+    write_dataset_collective(io.in_mpi_conv, plist_id,
+        buf->cols, nall, 2, count2, 0, 1, -1,
+        H5T_NATIVE_INT, convergence, (hsize_t)nall);
+    free(convergence);
+  }
+  if (( H5Pclose(plist_id) ) < 0) HERR(routineName);
+  if (flush) {
+    if (( H5Fflush(io.in_ncid, H5F_SCOPE_LOCAL) ) < 0) HERR(routineName);
   }
 
   sprintf(messageStr, "Process %4d: *** END   collective write\n", mpi.rank);

@@ -116,9 +116,9 @@ typedef struct {
      Added at the END of the struct so existing field offsets are
      preserved across incremental builds — old object files using a
      stale inputs.h still find atoms_file_contents etc. at the right
-     place.  When TRUE (default), rh15d_ray_pool reads the atmosphere
-     once per node into a shared-memory window and serves every
-     readAtmos call from that cache instead of touching the file.
+     place.  When TRUE (default FALSE), rh15d_ray_pool reads each node's
+     HDF5 atmosphere slab into shared-memory windows.  Cache misses from
+     work stealing fall back to independent file reads.
      atmos_cache_cyclic: v1 uses contiguous row-based decomposition.
      When TRUE, use cyclic row decomposition for spatial load balance.
      Plumbed but not yet honored in v1. */
@@ -132,10 +132,10 @@ typedef struct {
   bool_t pool_collective_write;
   /* Lustre contention-reduction toggle: when TRUE (default), the
      create_hdf5_fapl helpers pass the romio/stripe/cb_nodes MPI-IO
-     hints (built in initParallel) to H5Pset_fapl_mpio, AND enable
-     collective HDF5 metadata ops on the output FAPL.  When FALSE,
-     MPI_INFO_NULL is passed and collective metadata ops are left off
-     — toggle off to A/B against pre-42fc036/e1767d1 baseline.
+     hints (built in initParallel) to H5Pset_fapl_mpio, and
+     create_hdf5_fapl enables collective metadata operations.  When FALSE,
+     MPI_INFO_NULL is passed and collective metadata operations are off.
+     Atmosphere input metadata remains independent in either case.
      Note: H5Pset_alignment and H5Pset_meta_block_size are always
      applied (pure HDF5-level tuning with no behavioural side effects);
      H5Pset_file_locking(false) is also always applied (correctness

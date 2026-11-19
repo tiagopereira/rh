@@ -769,16 +769,9 @@ void writeMPI_all(void) {
   hsize_t  count[] = {1, 1, 1, 1};
   hsize_t  dims[4];
   hid_t    file_dspace, mem_dspace;
-  hid_t    plist_id;
+  hid_t    plist_id = H5P_DEFAULT;
 
-  /* Set collective read */
-
-  if (COLLECTIVE_IO_W && mpi.isbalanced) {
-    if ((plist_id = H5Pcreate(H5P_DATASET_XFER)) < 0) HERR(routineName);
-    if ((H5Pset_dxpl_mpio(plist_id, H5FD_MPIO_COLLECTIVE)) <0) HERR(routineName);
-  } else {
-    plist_id = H5P_DEFAULT;
-  }
+  /* Legacy task loops do not guarantee matching collective calls. */
 
   sprintf(messageStr, "Process %4d: *** Start writeMPI_all\n", mpi.rank);
 
@@ -836,16 +829,9 @@ void writeMPI_p(int task) {
   hsize_t  count[] = {1, 1, 1, 1};
   hsize_t  dims[4];
   hid_t    file_dspace, mem_dspace;
-  hid_t    plist_id;
+  hid_t    plist_id = H5P_DEFAULT;
 
-  /* Set collective read */
-
-  if (COLLECTIVE_IO_W && mpi.isbalanced) {
-    if ((plist_id = H5Pcreate(H5P_DATASET_XFER)) < 0) HERR(routineName);
-    if ((H5Pset_dxpl_mpio(plist_id, H5FD_MPIO_COLLECTIVE)) <0) HERR(routineName);
-  } else {
-    plist_id = H5P_DEFAULT;
-  }
+  /* Per-column writes are independent, regardless of workload balance. */
 
 
   dims[0] = 1;

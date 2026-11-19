@@ -436,19 +436,12 @@ void writeRay(void) {
   bool_t     write_xtra, crosscoupling, to_obs, initialize,prdh_limit_mem_save;
   ActiveSet *as;
   hid_t      ncid, file_dataspace, mem_dataspace;
-  hid_t      plist_id;
+  hid_t      plist_id = H5P_DEFAULT;
 
   write_xtra = (io.ray_nwave_sel > 0);
   ncid = io.ray_ncid;
 
-  /* Set collective write */
-
-  if (COLLECTIVE_IO_W && mpi.isbalanced) {
-    if ((plist_id = H5Pcreate(H5P_DATASET_XFER)) < 0) HERR(routineName);
-    if ((H5Pset_dxpl_mpio(plist_id, H5FD_MPIO_COLLECTIVE)) <0) HERR(routineName);
-  } else {
-    plist_id = H5P_DEFAULT;
-  }
+  /* Independent: convergence/crash decisions may make ranks skip this call. */
 
   /* Memory dataspace */
   dims[0] = spectrum.Nspect;

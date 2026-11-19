@@ -116,13 +116,13 @@ void initParallel(int *argc, char **argv[], bool_t run_ray) {
          RH_MPIIO_CB_BUFFER_SIZE (default 256 MB) -> cb_buffer_size  [bytes]
          RH_MPIIO_CB_NODES       (default 2*mpi.n_nodes) -> cb_nodes
 
-     The romio_cb_* / romio_ds_* booleans are not env-overridable
-     here — flip them via ROMIO_HINTS if you need to experiment.
+      The romio_cb_* / romio_ds_* booleans and cb_config_list are set
+      explicitly here and are not env-overridable by this code.
 
      Gated by keyword 15D_MPIIO_LUSTRE_HINTS (default TRUE).  When
      FALSE, the create_hdf5_fapl helpers below pass MPI_INFO_NULL to
      H5Pset_fapl_mpio and the MPI-IO driver falls back to ROMIO
-     defaults — use this to A/B against pre-42fc036/e1767d1 baseline.
+      defaults.  The batching and HDF5-level tuning remain active.
      NOTE: readInput has not run yet at this point, so mpi.info is
      always populated here; the keyword only affects whether it is
      passed into the FAPL. */
@@ -190,15 +190,13 @@ void initParallel(int *argc, char **argv[], bool_t run_ray) {
 /* ------- begin --------------------------   create_hdf5_fapl.c  --- */
 hid_t create_hdf5_fapl(void) {
 /* Creates an HDF5 file access property list optimised for Lustre,
-   with collective metadata enabled (for output files where all ranks
-   participate in I/O together).
+   with collective metadata enabled when MPI-IO Lustre hints are enabled.
    Caller is responsible for closing the returned plist with H5Pclose.
 
-   Keyword 15D_MPIIO_LUSTRE_HINTS (default TRUE) toggles the two
-   Lustre-specific behavioural knobs:
-     - info arg to H5Pset_fapl_mpio: mpi.info (romio + stripe hints
-       built in initParallel) when TRUE, MPI_INFO_NULL when FALSE
-     - collective HDF5 metadata ops: enabled when TRUE, off when FALSE
+   Keyword 15D_MPIIO_LUSTRE_HINTS (default TRUE) selects mpi.info (ROMIO
+   and stripe hints built in initParallel) or MPI_INFO_NULL, and toggles
+   collective metadata operations on these files.  Atmosphere input uses
+   create_hdf5_fapl_indep instead, keeping its metadata independent.
    H5Pset_alignment and H5Pset_meta_block_size are always applied
    (pure HDF5-level tuning, no behavioural side effects).
    H5Pset_file_locking is always disabled (correctness on Lustre). */
@@ -215,9 +213,9 @@ hid_t create_hdf5_fapl(void) {
      metadata operations */
   if (( H5Pset_meta_block_size(plist, 8388608) ) < 0) HERR(routineName);
   if (input.mpiio_lustre_hints) {
-    /* Collective metadata I/O: does NOT synchronise data writes, only
-       makes HDF5 metadata operations collective, which greatly reduces
-       metadata contention on Lustre (available since HDF5 1.10). */
+    /* Collective metadata I/O reduces contention on Lustre.  Metadata
+       calls on these files must have matching participation by all ranks;
+       data transfer mode is selected separately on the transfer plist. */
     if (( H5Pset_all_coll_metadata_ops(plist, 1) ) < 0) HERR(routineName);
     if (( H5Pset_coll_metadata_write(plist, 1) ) < 0) HERR(routineName);
   }

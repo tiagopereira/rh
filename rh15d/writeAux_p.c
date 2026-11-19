@@ -642,18 +642,13 @@ void writeAux_all(void) {
   hsize_t  count[] = {1, 1, 1, 1};
   hsize_t  dims[4];
   hid_t    file_dspace, mem_dspace;
-  hid_t    plist_id;
+  hid_t    plist_id = H5P_DEFAULT;
   Atom      *atom;
   Molecule  *molecule;
   int        nact, task;
   long       ind = 0;
 
-  if (COLLECTIVE_IO_W && mpi.isbalanced) {
-    if ((plist_id = H5Pcreate(H5P_DATASET_XFER)) < 0) HERR(routineName);
-    if ((H5Pset_dxpl_mpio(plist_id, H5FD_MPIO_COLLECTIVE)) <0) HERR(routineName);
-  } else {
-    plist_id = H5P_DEFAULT;
-  }
+  /* Legacy writes are independent; ranks may skip crashed columns. */
 
   /* ATOM loop */
   for (nact = 0;  nact < atmos.Nactiveatom;  nact++) {
@@ -788,18 +783,13 @@ void writeAux_p(void) {
   hsize_t  dims[5];
   double  *coll_rates;
   hid_t    file_dspace, mem_dspace;
-  hid_t      plist_id;
+  hid_t      plist_id = H5P_DEFAULT;
   Atom      *atom;
   Molecule  *molecule;
   AtomicLine      *line;
   AtomicContinuum *continuum;
 
-  if (COLLECTIVE_IO_W && mpi.isbalanced) {
-    if ((plist_id = H5Pcreate(H5P_DATASET_XFER)) < 0) HERR(routineName);
-    if ((H5Pset_dxpl_mpio(plist_id, H5FD_MPIO_COLLECTIVE)) <0) HERR(routineName);
-  } else {
-    plist_id = H5P_DEFAULT;
-  }
+  /* Per-column writes do not have matching calls on every rank. */
 
   /* --- ATOMS ---  */
   for (nact = 0;  nact < atmos.Nactiveatom;  nact++) {
@@ -964,18 +954,12 @@ void readPopulations(Atom *atom) {
   hsize_t count[] = {1, 1, 1, 1};
   hsize_t dims[4];
   hid_t ncid, file_dspace, mem_dspace, pop_var;
-  hid_t      plist_id;
 
-  if (COLLECTIVE_IO_W && mpi.isbalanced) {
-    if ((plist_id = H5Pcreate(H5P_DATASET_XFER)) < 0) HERR(routineName);
-    if ((H5Pset_dxpl_mpio(plist_id, H5FD_MPIO_COLLECTIVE)) <0) HERR(routineName);
-  } else {
-    plist_id = H5P_DEFAULT;
-  }
+  /* Population reads are independent, including in asynchronous pool mode. */
 
   /* --- Open atom group --- */
   sprintf(group_name,(atom->ID[1] == ' ') ? "atom_%.1s" : "atom_%.2s", atom->ID);
-  if (( ncid = H5Gopen(io.aux_ncid, group_name, plist_id) ) < 0)
+  if (( ncid = H5Gopen(io.aux_ncid, group_name, H5P_DEFAULT) ) < 0)
     HERR(routineName);
   /* --- Consistency checks --- */
   /* Check that atmosID is the same */
@@ -1010,7 +994,7 @@ void readPopulations(Atom *atom) {
   }
 
   /* --- Read data --- */
-  if (( pop_var = H5Dopen2(ncid, POP_NAME, plist_id)) < 0)
+  if (( pop_var = H5Dopen2(ncid, POP_NAME, H5P_DEFAULT)) < 0)
     HERR(routineName);
   dims[0] = atom->Nlevel;
   dims[1] = atmos.Nspace;
@@ -1026,10 +1010,11 @@ void readPopulations(Atom *atom) {
   if (( H5Sselect_hyperslab(file_dspace, H5S_SELECT_SET, offset,
                             NULL, count, NULL) ) < 0) HERR(routineName);
   if (( H5Dread(pop_var, H5T_NATIVE_DOUBLE, mem_dspace,
-                file_dspace, plist_id, atom->n[0]) ) < 0) HERR(routineName);
+                file_dspace, H5P_DEFAULT, atom->n[0]) ) < 0) HERR(routineName);
   if (( H5Sclose(mem_dspace) ) < 0) HERR(routineName);
   if (( H5Sclose(file_dspace) ) < 0) HERR(routineName);
   if (( H5Dclose(pop_var) ) < 0) HERR(routineName);
+  if (( H5Gclose(ncid) ) < 0) HERR(routineName);
 
   return;
 }
@@ -1113,6 +1098,7 @@ void readMolPops(Molecule *molecule) {
   if (( H5Sclose(mem_dspace) ) < 0) HERR(routineName);
   if (( H5Sclose(file_dspace) ) < 0) HERR(routineName);
   if (( H5Dclose(pop_var) ) < 0) HERR(routineName);
+  if (( H5Gclose(ncid) ) < 0) HERR(routineName);
 
   return;
 }
